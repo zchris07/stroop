@@ -40,7 +40,7 @@ wear the boss down by answering through eleven challenge layouts:
 
 The buttons can circle the screen, tumble and stack under physics, bounce
 around like an old DVD screensaver, hide in the dark or blink in and out. There
-are two endings.
+are two endings, and you can click to skip the boss's cutscenes.
 
 > ⚠️ Stage 3 and the boss include flashing colours and audio. Skip them if
 > that's not for you.
@@ -50,7 +50,8 @@ are two endings.
 ### Solo
 
 You have **3 lives**. A wrong answer or a timeout costs one, and the run ends
-when they're gone. Climb the stages, reach the boss, and beat your best score.
+when they're gone. Climb the stages, reach the boss, and beat your best score. A leave button
+in the HUD takes you back to the menu at any time.
 
 ### Multiplayer lobbies
 
