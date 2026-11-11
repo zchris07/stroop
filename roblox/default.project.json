@@ -1,0 +1,30 @@
+{
+  "name": "Stroop",
+  "tree": {
+    "$className": "DataModel",
+
+    "ReplicatedStorage": {
+      "$className": "ReplicatedStorage",
+      "Stroop": {
+        "$path": "src/ReplicatedStorage/Stroop"
+      }
+    },
+
+    "ServerScriptService": {
+      "$className": "ServerScriptService",
+      "StroopServer": {
+        "$path": "src/ServerScriptService/StroopServer.server.lua"
+      }
+    },
+
+    "StarterPlayer": {
+      "$className": "StarterPlayer",
+      "StarterPlayerScripts": {
+        "$className": "StarterPlayerScripts",
+        "StroopClient": {
+          "$path": "src/StarterPlayer/StarterPlayerScripts/StroopClient"
+        }
+      }
+    }
+  }
+}

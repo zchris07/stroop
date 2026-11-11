@@ -1,0 +1,2656 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>STROOP</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500;1,700&display=swap" rel="stylesheet">
+<!-- Rigid-body physics for the stage 4 falling-buttons challenge (falls back to jsDelivr). -->
+<script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js" defer
+  onerror="var s=document.createElement('script');s.src='https://cdn.jsdelivr.net/npm/matter-js@0.19.0/build/matter.min.js';document.head.appendChild(s);"></script>
+<script type="module">
+  // ====== FIREBASE CONFIG ======
+  const firebaseConfig = {
+    apiKey: "AIzaSyB4lqrWfZ7BjbFXc1kYfy0botYhCELTiAc",
+    authDomain: "stroop-f29cf.firebaseapp.com",
+    projectId: "stroop-f29cf",
+    storageBucket: "stroop-f29cf.firebasestorage.app",
+    messagingSenderId: "324422596056",
+    appId: "1:324422596056:web:deac814fca36e4bb2a2ead"
+  };
+  // =============================
+
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
+  import { getFirestore, doc, setDoc, getDoc, getDocs, collection }
+    from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
+
+  window.__fbReady = false;
+  try{
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    window.fbApi = {
+      async getMeta(code){
+        const s = await getDoc(doc(db,'lobbies',code));
+        return s.exists() ? s.data() : null;
+      },
+      async setMeta(code, data){
+        await setDoc(doc(db,'lobbies',code), data, { merge:true });
+      },
+      async setPlayer(code, id, data){
+        await setDoc(doc(db,'lobbies',code,'players',id), data);
+      },
+      async getPlayers(code){
+        const s = await getDocs(collection(db,'lobbies',code,'players'));
+        return s.docs.map(d => Object.assign({ id:d.id }, d.data()));
+      },
+      async getRound(code){
+        const s = await getDoc(doc(db,'lobbies',code,'round','current'));
+        return s.exists() ? s.data() : null;
+      },
+      async setRound(code, data){
+        await setDoc(doc(db,'lobbies',code,'round','current'), data);
+      }
+    };
+    window.__fbReady = true;
+  }catch(e){
+    console.error('Firebase failed to initialize:', e);
+    window.__fbInitError = e;
+  }
+</script>
+<style>
+  :root{
+    --ok:#2f9e44;
+    --bad:#e03131;
+  }
+
+  *{box-sizing:border-box;}
+  html,body{
+    margin:0;padding:0;height:100%;
+    font-family:'IBM Plex Mono', monospace;
+    overflow:hidden;
+    -webkit-tap-highlight-color:transparent;
+    user-select:none;
+  }
+
+  /* ---------- theme ---------- */
+  #app{
+    position:relative;
+    height:100vh;
+    width:100vw;
+    display:flex;
+    flex-direction:column;
+    --page-bg:#12141c;
+    --ink:#eef0f6;
+    --dim:#7b8096;
+    --panel:#1b1e29;
+    --panel-line:#2a2e3c;
+    background-color:var(--page-bg);
+    color:var(--ink);
+    transition: background-color .8s ease, color .8s ease;
+  }
+  #app.light{
+    --page-bg:#dcdad3;
+    --ink:#16181d;
+    --dim:#5f636d;
+    --panel:#ffffff;
+    --panel-line:#bcb8ae;
+  }
+
+  #bgTint{
+    position:absolute; inset:0; z-index:0;
+    background-color:transparent;
+    opacity:0;
+    transition: background-color .45s ease, opacity .45s ease;
+    pointer-events:none;
+  }
+
+  /* ---------- HUD ---------- */
+  .hud{
+    display:flex;
+    justify-content:space-between;
+    align-items:center;
+    padding:16px 20px 6px;
+    font-size:11.5px;
+    letter-spacing:.14em;
+    color:var(--dim);
+    z-index:3;
+    position:relative;
+  }
+  .hud .brand{
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-weight:700;
+    color:var(--ink);
+    font-size:15px;
+    letter-spacing:.08em;
+  }
+  .hud .cluster{ display:flex; gap:18px; align-items:center; }
+  .hud .metric{ position:relative; }
+  .hud .metric b{
+    display:block;
+    color:var(--ink);
+    font-size:15px;
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    letter-spacing:0;
+    margin-top:2px;
+  }
+  /* Score-vs-goal is the thing players scan for most — give it weight. */
+  .hud .metric.key b{ font-size:21px; line-height:1.05; }
+  .hud .metric.key.goal b{ color:var(--ok); }
+  @media (max-width:520px){
+    .hud{ padding:12px 12px 5px; }
+    .hud .cluster{ gap:12px; }
+    .hud .metric.key b{ font-size:18px; }
+  }
+  .score-pop{
+    position:absolute; top:-6px; right:-10px;
+    font-size:11px; font-weight:600; color:var(--ok);
+    animation: popFade .9s ease forwards;
+    pointer-events:none;
+  }
+  @keyframes popFade{
+    0%{ opacity:0; transform:translateY(4px); }
+    25%{ opacity:1; transform:translateY(0); }
+    100%{ opacity:0; transform:translateY(-14px); }
+  }
+  #lives{ letter-spacing:.2em; font-size:14px; }
+  #lives span.lost{ color:var(--panel-line); }
+  #lives span.alive{ color:var(--bad); }
+  .hidden{ display:none !important; }
+
+  /* ---------- timer ---------- */
+  .timer-track{
+    height:3px;
+    width:100%;
+    background:var(--panel-line);
+    z-index:3;
+    position:relative;
+  }
+  .timer-fill{
+    height:100%;
+    width:100%;
+    background:linear-gradient(90deg, var(--ok), #f5b800 65%, var(--bad));
+    transform-origin:left;
+  }
+
+  /* ---------- stage / word ---------- */
+  .stage{
+    flex:1;
+    position:relative;
+    z-index:2;
+    min-height:0;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+  }
+  .stage-label{
+    position:absolute;
+    top:12px;
+    left:50%;
+    transform:translateX(-50%);
+    font-size:10px;
+    letter-spacing:.28em;
+    color:var(--dim);
+    text-transform:uppercase;
+    z-index:3;
+  }
+  #waitingMsg{
+    position:absolute; top:34px; left:50%; transform:translateX(-50%);
+    font-size:11px; letter-spacing:.08em; color:var(--ok);
+    z-index:3; text-align:center; width:90%;
+  }
+  .word{
+    position:absolute;
+    /* Spans the full #app box (100vh) so the word sits at the true visual
+       centre of the window, not the centre of the space under the HUD. */
+    top:0; left:0; right:0; bottom:0;
+    z-index:2;
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    pointer-events:none;
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-weight:700;
+    font-size:clamp(32px, 7.5vw, 72px);
+    letter-spacing:.02em;
+    text-align:center;
+    padding:0 6%;
+  }
+  /* Placement feedback — same serif as the word, sits just beneath it. */
+  #placement{
+    position:absolute;
+    top:calc(50% + clamp(38px, 6vh, 64px));
+    left:0; right:0;
+    z-index:3;
+    text-align:center;
+    pointer-events:none;
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-weight:700;
+    font-size:clamp(19px, 3.4vw, 30px);
+    color:var(--ink);
+    text-transform:lowercase;
+  }
+  #placement.hidden{ display:none; }
+  #placement.show{ animation: placementIn .42s cubic-bezier(.2,.8,.3,1) both; }
+  @keyframes placementIn{
+    0%{ opacity:0; transform:translateY(10px) scale(.9); }
+    55%{ opacity:1; transform:translateY(0) scale(1.05); }
+    100%{ opacity:1; transform:translateY(0) scale(1); }
+  }
+  .word.countdown{
+    -webkit-text-stroke: 0;
+    color:var(--ink);
+    animation: countPulse .55s ease;
+  }
+  @keyframes countPulse{
+    0%{ opacity:0; transform:scale(.75); }
+    45%{ opacity:1; transform:scale(1.06); }
+    100%{ opacity:1; transform:scale(1); }
+  }
+  .word.pulse-ok{ animation:okpulse .35s ease; }
+  .word.pulse-bad{ animation:badshake .4s ease; }
+  @keyframes okpulse{
+    0%{ transform:scale(1); } 40%{ transform:scale(1.1); } 100%{ transform:scale(1); }
+  }
+  @keyframes badshake{
+    0%,100%{ transform:translateX(0); }
+    20%{ transform:translateX(-10px) rotate(-1deg); }
+    40%{ transform:translateX(10px) rotate(1deg); }
+    60%{ transform:translateX(-6px); }
+    80%{ transform:translateX(6px); }
+  }
+
+  /* ---------- live leaderboard ---------- */
+  #liveboard{
+    position:absolute;
+    top:56px; right:14px;
+    z-index:4;
+    background:var(--panel);
+    border:1px solid var(--panel-line);
+    border-radius:12px;
+    padding:0;
+    min-width:168px;
+    max-width:220px;
+    font-size:11px;
+    overflow:hidden;
+    display:none;
+    box-shadow:0 2px 10px rgba(0,0,0,.10);
+  }
+  #liveboard.show{ display:block; }
+  #liveboard .lb-head{
+    display:flex; align-items:baseline; justify-content:space-between;
+    gap:8px; padding:8px 11px 7px;
+    border-bottom:1px solid var(--panel-line);
+    background:color-mix(in srgb, var(--ink) 5%, var(--panel));
+  }
+  #liveboard .lb-head .lb-lbl{
+    color:var(--dim); letter-spacing:.16em; font-size:9px; text-transform:uppercase;
+  }
+  #liveboard .lb-head .lb-goal{
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-weight:700; font-size:15px; color:var(--ink); letter-spacing:0;
+  }
+  #liveboard .lb-rows{ padding:5px 6px 6px; }
+  #liveboard .lb-row{
+    display:grid;
+    grid-template-columns:15px 1fr auto;
+    align-items:center;
+    gap:7px;
+    padding:4px 5px;
+    border-radius:6px;
+    color:var(--ink);
+    line-height:1.25;
+  }
+  #liveboard .lb-row .lb-rank{ color:var(--dim); font-size:10px; text-align:right; }
+  #liveboard .lb-row .lb-name{
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  }
+  #liveboard .lb-row .lb-pts{
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-weight:700; font-size:14px;
+  }
+  #liveboard .lb-row.me{
+    background:color-mix(in srgb, var(--ok) 15%, transparent);
+  }
+  #liveboard .lb-row.me .lb-name{ font-weight:600; }
+  #liveboard .lb-row.me .lb-rank{ color:var(--ok); }
+  #liveboard .lb-row.leader .lb-pts{ color:var(--ok); }
+  #liveboard .lb-row.idle{ opacity:.42; }
+  @media (max-width:520px){
+    #liveboard{ min-width:140px; max-width:170px; top:52px; right:8px; font-size:10.5px; }
+    #liveboard .lb-row .lb-pts{ font-size:13px; }
+  }
+
+  /* ---------- options ---------- */
+  .options{
+    display:flex;
+    flex-wrap:wrap;
+    gap:20px 48px;
+    justify-content:center;
+    align-items:center;
+    padding:16px 18px 62px;   /* deeper bottom pad lifts the row up the screen */
+    z-index:3;
+    position:relative;
+  }
+  /* Lift the Stage 1 and 2 rows without moving the Stage 3 grid. */
+  .options:not(.grid3){ padding-bottom:188px; }
+  .options.grid3{
+    display:grid;
+    /* Three rows of the standard Stage 1/2 button treatment. */
+    grid-template-columns:repeat(3, minmax(132px, max-content));
+    row-gap:20px;
+    column-gap:48px;
+    justify-content:center;
+    max-width:none;
+    margin:0 auto;
+    /* With identical button rows, this places row two at the Stage 1/2 height. */
+    padding:16px 18px 104px;
+  }
+  .opt{
+    font-family:'IBM Plex Mono', monospace;
+    font-weight:600;
+    font-size:18px;
+    letter-spacing:.05em;
+    color:var(--ink);
+    background:var(--panel);
+    border:2px solid var(--panel-line);
+    border-radius:13px;
+    padding:21px 28px;
+    min-width:132px;
+    cursor:pointer;
+    transition: border-color .15s ease, background .15s ease, transform .1s ease;
+  }
+  .options.grid3 .opt{
+    /* Match the default .opt values used by Stages 1 and 2. */
+    min-width:132px;
+    width:auto;
+    padding:21px 28px;
+    font-size:18px;
+  }
+  .opt:hover{ transform:translateY(-2px); }
+  .opt.correct{
+    border-color:var(--ok) !important;
+    background:color-mix(in srgb, var(--ok) 16%, var(--panel)) !important;
+  }
+  .opt.wrong{
+    border-color:var(--bad) !important;
+    background:color-mix(in srgb, var(--bad) 16%, var(--panel)) !important;
+  }
+  .opt[disabled]{ pointer-events:none; }
+
+  /* Mobile: shrink buttons and the desktop "lift" padding (which was
+     eating enough vertical space on short screens to push the button
+     row up into the vertically-centered word), and make Stage 3's grid
+     use even fractional columns instead of a fixed min-width so all
+     three columns stay on-screen. Placed AFTER the base .opt / .options
+     rules above so it actually wins the cascade at this breakpoint. */
+  @media (max-width:520px){
+    .options{
+      gap:10px 12px;
+      padding:10px 14px 20px;
+    }
+    .options:not(.grid3){ padding-bottom:20px; }
+    .options.grid3{
+      grid-template-columns:repeat(3, minmax(0,1fr));
+      row-gap:8px;
+      column-gap:8px;
+      padding:10px 10px 16px;
+    }
+    .opt{
+      font-size:14px;
+      padding:12px 10px;
+      min-width:0;
+    }
+    .options.grid3 .opt{
+      min-width:0;
+      width:100%;
+      padding:10px 6px;
+      font-size:12.5px;
+    }
+  }
+
+  /* ---------- entrance animations ---------- */
+  @keyframes slideDownIn{ from{opacity:0; transform:translateY(-26px);} to{opacity:1; transform:translateY(0);} }
+  @keyframes slideUpIn{ from{opacity:0; transform:translateY(26px);} to{opacity:1; transform:translateY(0);} }
+  .enter-top{ animation: slideDownIn .6s cubic-bezier(.2,.7,.3,1) both; }
+  .enter-bottom{ animation: slideUpIn .6s cubic-bezier(.2,.7,.3,1) both; }
+
+  /* In-game chrome has no visible state of its own until #app carries
+     .in-game — this stops it from bleeding through the overlay while it
+     fades out, and stops the old hidden -> flash -> re-animate glitch. */
+  #app:not(.in-game) #hud,
+  #app:not(.in-game) #timerTrack,
+  #app:not(.in-game) #stageEl,
+  #app:not(.in-game) #word,
+  #app:not(.in-game) #placement,
+  #app:not(.in-game) #options{
+    opacity:0;
+    pointer-events:none;
+  }
+
+  @keyframes cardFadeOut{ from{ opacity:1; } to{ opacity:0; } }
+  .card.card-fade-out{ animation: cardFadeOut .38s ease forwards; pointer-events:none; }
+
+  /* Full-screen color crossfade only — no movement, no shrinking panel. */
+  .overlay{ transition: background-color .8s ease; }
+  .overlay.bg-crossfade{ background-color:#dcdad3; }
+
+  /* ---------- overlay & cards ---------- */
+  .overlay{
+    position:absolute; inset:0;
+    background:rgba(10,11,16,.93);
+    backdrop-filter: blur(3px);
+    display:flex; align-items:center; justify-content:center;
+    z-index:5;
+    overflow-y:auto;
+    padding:24px 0;
+    color:#eef0f6;
+  }
+  .overlay .card{ text-align:center; max-width:400px; width:90%; padding:0 24px; }
+  /* The menu logo gets its own full-width lane; all other cards stay constrained. */
+  .overlay .menu-card{ width:100%; max-width:none; padding:0; }
+  .card.hidden{ display:none; }
+  .card .eyebrow{
+    font-size:11px; letter-spacing:.3em; color:#7b8096;
+    text-transform:uppercase; margin-bottom:10px;
+  }
+  .card h1{
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-size:27px; margin:0 0 14px; letter-spacing:-.01em; color:#eef0f6;
+  }
+  .card h1.result-letter{
+    font-size:clamp(88px, 26vw, 168px);
+    line-height:1;
+    margin:4px 0 10px;
+    letter-spacing:.02em;
+  }
+  .card h1.mega {
+    display:block;
+    width:100%;
+    font-size:clamp(56px, 17vw, 104px);
+    letter-spacing:0;
+    text-indent:0;
+    margin:0;
+    padding:0;
+    line-height:1;
+    text-align:center;
+  }
+  /* This preserves the original usable width for the menu buttons and tagline. */
+  .menu-card .menu-content{
+    width:min(90%, 400px);
+    margin-inline:auto;
+    padding:0 24px;
+    box-sizing:border-box;
+    text-align:center;
+  }
+  .card .tagline{
+    font-size:13px; color:#7b8096; letter-spacing:.06em;
+    margin:0 0 26px; white-space:nowrap;
+  }
+  .card p{ color:#7b8096; font-size:13px; line-height:1.6; margin:0 0 8px; }
+  .card .stage-brief{
+    text-align:left; background:#1b1e29; border:1px solid #2a2e3c;
+    border-radius:10px; padding:14px 16px; margin:16px 0;
+    font-size:12px; line-height:1.7; color:#7b8096;
+  }
+  .card .stage-brief b{ color:#eef0f6; }
+  .card .stat-row{ display:flex; justify-content:center; gap:26px; margin:18px 0 22px; flex-wrap:wrap; }
+  .card .stat b{
+    display:block;
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-size:22px; color:#eef0f6;
+  }
+  .card .stat span{ font-size:10px; letter-spacing:.18em; color:#7b8096; }
+  .warn{ font-size:11px; color:#7b8096; margin-top:14px; }
+  .go-btn{
+    font-family:'IBM Plex Mono', monospace; font-weight:600;
+    letter-spacing:.1em; font-size:13px;
+    color:#0a0b10; background:#eef0f6; border:none; border-radius:10px;
+    padding:14px 28px; cursor:pointer; width:100%; margin-top:8px;
+    transition:transform .1s ease, opacity .15s ease;
+  }
+  .go-btn:hover{ opacity:.9; }
+  .go-btn:active{ transform:scale(.98); }
+  .go-btn.ghost{ background:transparent; color:#eef0f6; border:1.5px solid #2a2e3c; }
+  .field{ text-align:left; margin-top:14px; }
+  .field label{
+    display:block; font-size:10.5px; letter-spacing:.16em; color:#7b8096;
+    margin-bottom:6px; text-transform:uppercase;
+  }
+  .field input{
+    width:100%; background:#1b1e29; border:1.5px solid #2a2e3c; border-radius:9px;
+    padding:12px 14px; color:#eef0f6;
+    font-family:'IBM Plex Mono', monospace; font-size:15px; letter-spacing:.08em;
+  }
+  .field input:focus{ outline:none; border-color:#454a5e; }
+  .code-display{
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-size:38px; font-weight:700; letter-spacing:.14em; margin:16px 0 6px; color:#eef0f6;
+  }
+  .link-row{ display:flex; gap:8px; margin-top:10px; }
+  .link-row input{
+    flex:1; background:#1b1e29; border:1.5px solid #2a2e3c; border-radius:9px;
+    padding:10px 12px; color:#7b8096; font-size:11px; font-family:'IBM Plex Mono', monospace;
+  }
+  .link-row button{
+    background:#1b1e29; border:1.5px solid #2a2e3c; border-radius:9px; color:#eef0f6;
+    padding:0 16px; font-size:11px; font-family:'IBM Plex Mono', monospace; cursor:pointer;
+  }
+  .roster{ text-align:left; margin:16px 0; max-height:160px; overflow-y:auto; }
+  .roster-row{
+    display:flex; justify-content:space-between; padding:8px 10px;
+    border-bottom:1px solid #2a2e3c; font-size:13px; color:#eef0f6;
+  }
+  .roster-row span:last-child{ color:#7b8096; }
+  .err-msg{ color:#e03131; font-size:12px; margin-top:8px; min-height:14px; }
+  .small-link{
+    background:none; border:none; color:#7b8096;
+    font-family:'IBM Plex Mono', monospace; font-size:11.5px;
+    text-decoration:underline; cursor:pointer; margin-top:14px;
+  }
+  @media (max-width:360px){
+    .menu-card .tagline{ white-space:normal; }
+  }
+
+  /* =========================================================
+     STAGE 4 — boss layer (solo only, desktop fullscreen)
+     ========================================================= */
+  #boss{
+    position:fixed; inset:0; z-index:50;
+    --logo-fs: clamp(56px, 17vw, 104px);   /* identical to the menu logo */
+    background-color:#000; color:#fff;
+    opacity:0;
+    transition: opacity 1.6s ease, background-color 2.2s ease;
+    overflow:hidden; isolation:isolate;
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+  }
+  #boss.show{ opacity:1; }
+  #boss.can-return{ cursor:pointer; }
+
+  #bossTint{
+    position:absolute; inset:0; z-index:0;
+    background-color:#000; opacity:0;
+    transition: background-color .36s ease, opacity .9s ease;
+    pointer-events:none;
+  }
+  #bossTint.on{ opacity:1; }
+
+  /* intro lines — each letter is stroked on, then inked in */
+  #bossMsg{
+    position:absolute; inset:0; z-index:1;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:none;
+  }
+  .write-svg{ overflow:visible; transition: opacity 1.1s ease, filter 1.1s ease, transform 1.1s ease; }
+  .write-svg.gone{ opacity:0; filter:blur(5px); transform:translateY(-6px); }
+  .write-svg text{ font-family: Georgia, 'Iowan Old Style', serif; font-style:italic; text-rendering:geometricPrecision; }
+  .write-svg text.wl{
+    fill:rgba(255,255,255,0);
+    stroke:#fff; stroke-width:1.1px; stroke-linecap:round; stroke-linejoin:round;
+    stroke-dasharray:460; stroke-dashoffset:460;
+    animation: bossWrite 1.25s cubic-bezier(.5,.1,.3,1) forwards, bossInk .8s ease forwards;
+    animation-delay: var(--d), calc(var(--d) + 520ms);
+  }
+  @keyframes bossWrite{ to{ stroke-dashoffset:0; } }
+  @keyframes bossInk{ to{ fill:#fff; stroke-width:.35px; } }
+
+  /* the boss itself. difference-blend keeps it white on black and
+     legible (inverted) whenever the backdrop flashes pale. */
+  #bossLogo{
+    position:absolute; left:50%; top:calc(100vh / 7); z-index:2;
+    transform:translate(-50%, calc(-50% - 36vh)); opacity:0;
+    transition: transform 2.8s cubic-bezier(.16,.84,.3,1), opacity 2s ease, top 2.6s cubic-bezier(.65,0,.35,1);
+    mix-blend-mode:difference;
+    pointer-events:none; white-space:nowrap;
+  }
+  #bossLogo.in{ transform:translate(-50%,-50%); opacity:1; }
+  #bossLogo.center{ top:50%; }
+  #bossLogo.fade8{
+    opacity:0;
+    transition: top 2.6s cubic-bezier(.65,0,.35,1), opacity 8s cubic-bezier(.45,0,.75,.6);
+  }
+  .bl-bob{ display:block; }
+  .bl-bob.bob{ animation: bossBob 5.4s ease-in-out infinite; }
+  @keyframes bossBob{ 0%,100%{ transform:translateY(0); } 50%{ transform:translateY(-7px); } }
+  .bl-txt{
+    display:block;
+    font-family: Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif;
+    font-weight:700; font-size:var(--logo-fs); line-height:1; letter-spacing:0; color:#fff;
+  }
+  .bl-txt.hit{ animation: bossHit .55s cubic-bezier(.3,.7,.3,1); }
+  @keyframes bossHit{
+    0%{ transform:none; opacity:1; }
+    14%{ transform:translate(-8px,2px) skewX(-5deg); opacity:.45; }
+    34%{ transform:translate(7px,-2px) skewX(4deg); opacity:.85; }
+    56%{ transform:translate(-3px,1px) skewX(-1deg); }
+    100%{ transform:none; opacity:1; }
+  }
+
+  #bossHp{
+    position:absolute; left:50%; z-index:2;
+    top:calc(100vh / 7 + var(--logo-fs) * .5 + 12px);
+    width:400px; height:4px;
+    transform:translateX(-50%);
+    mix-blend-mode:difference;
+    pointer-events:none;
+    transition: opacity .9s ease;
+  }
+  #bossHpFill{
+    width:100%; height:100%; border-radius:2px; background:#fff;
+    transform:scaleX(0); transform-origin:center;
+    transition: transform 1.6s cubic-bezier(.2,.8,.2,1);
+  }
+  #bossHpFill.fight{ transition: transform .8s cubic-bezier(.3,.9,.3,1); }
+
+  /* hairline answer clock along the top edge, shrinking toward centre */
+  #bossTimer{
+    position:absolute; left:0; right:0; top:0; height:3px; z-index:3;
+    mix-blend-mode:difference; opacity:0;
+    transition: opacity .8s ease; pointer-events:none;
+  }
+  #bossTimer.on{ opacity:.6; }
+  #bossTimerFill{ width:100%; height:100%; background:#fff; transform-origin:center; }
+
+  #bossLives{
+    position:absolute; top:34px; right:40px; z-index:6;
+    display:flex; gap:14px;
+    opacity:0; transition: opacity 1.3s ease;
+    pointer-events:none;
+  }
+  #bossLives.on{ opacity:1; }
+  #bossLives span{
+    width:16px; height:16px; border-radius:50%;
+    border:2px solid #e03131; background:#e03131;
+    transition: background-color .5s ease, border-color .5s ease;
+  }
+  #bossLives span.lost{ background:transparent; border-color:#8a8f9c; animation: lifeLost .6s ease; }
+  @keyframes lifeLost{ 0%{ transform:scale(1); } 30%{ transform:scale(1.55); } 100%{ transform:scale(1); } }
+
+  #bossBegin{
+    position:absolute; inset:0; z-index:3;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:700; font-size:clamp(34px, 3.6vw, 56px);
+    letter-spacing:.34em; text-indent:.34em; color:#fff;
+    opacity:0; pointer-events:none;
+  }
+  #bossBegin.flash{ animation: bossBegin .8s ease forwards; }
+  @keyframes bossBegin{
+    0%{ opacity:0; transform:scale(.97); }
+    16%{ opacity:1; transform:scale(1); }
+    70%{ opacity:1; }
+    100%{ opacity:0; transform:scale(1.02); }
+  }
+
+  /* challenge surface — sits above the logo and health bar */
+  #bossArena{ position:absolute; inset:0; z-index:4; }
+  .bword{
+    position:absolute; left:0; top:0;
+    transform:translate(-50%,-50%);
+    font-size:clamp(44px, 5vw, 82px); line-height:1.05;
+    white-space:nowrap; pointer-events:none;
+    opacity:0; transition: opacity .6s ease;
+  }
+  .bword.in{ opacity:1; }
+  .bword.vertical{ writing-mode:vertical-rl; text-orientation:upright; line-height:1; }
+  .bword-in{ display:block; }
+  .bword-in.pulse-ok{ animation: okpulse .35s ease; }
+  .bword-in.pulse-bad{ animation: badshake .4s ease; }
+
+  .bopt{
+    position:absolute; left:0; top:0;
+    font-family:'IBM Plex Mono', monospace; font-weight:500;
+    font-size:27px; line-height:1.2; letter-spacing:.05em;
+    padding:31px 42px; min-width:198px;          /* stage 3 button × 1.5 */
+    border:3px solid transparent; border-radius:19px;
+    white-space:nowrap; cursor:pointer;
+    touch-action:none; will-change:transform;
+    opacity:0; scale:.88;
+    transition: opacity .6s ease, scale .6s cubic-bezier(.2,.8,.3,1), box-shadow .25s ease;
+  }
+  .bopt.in{ opacity:1; scale:1; }
+  .bopt.circle{
+    border-radius:50%; padding:0; min-width:0;
+    display:flex; align-items:center; justify-content:center;
+  }
+  .bopt:focus{ outline:none; }
+  .bopt:focus-visible{ outline:3px solid #fff; outline-offset:3px; }
+  .bopt.hit-ok{ box-shadow:0 0 0 5px #2f9e44, 0 0 36px rgba(47,158,68,.75); }
+  .bopt.hit-bad{ box-shadow:0 0 0 5px #e03131, 0 0 36px rgba(224,49,49,.75); }
+  .bopt.dim{ opacity:.25; }
+  .bopt.out{ opacity:0; scale:.92; }
+
+  #bossW{
+    position:absolute; inset:0; z-index:7;
+    display:flex; align-items:center; justify-content:center;
+    font-weight:700; font-size:min(74vh, 64vw); line-height:1; color:#16181d;
+    opacity:0; transform:scale(.965);
+    transition: opacity 1.8s ease, transform 2.6s cubic-bezier(.2,.8,.2,1);
+    pointer-events:none;
+  }
+  #bossW.in{ opacity:1; transform:none; }
+  #bossHint{
+    position:absolute; left:0; right:0; bottom:44px; z-index:7;
+    text-align:center;
+    font-family:'IBM Plex Mono', monospace; font-size:12px; letter-spacing:.14em; color:#5f636d;
+    opacity:0; transition: opacity 1.4s ease; pointer-events:none;
+  }
+  #bossHint.in{ opacity:1; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="bgTint"></div>
+
+  <div class="hud" id="hud">
+    <div class="brand">STROOP</div>
+    <div class="cluster">
+      <div class="metric key" id="scoreMetric">SCORE<b id="score">0</b></div>
+      <div class="metric key goal hidden" id="goalMetric">TO WIN<b id="goalScore">–</b></div>
+      <div class="metric">STAGE<b id="stageNum">1</b></div>
+      <div class="metric" id="bestMetric">BEST<b id="best">0</b></div>
+      <div id="lives"></div>
+    </div>
+  </div>
+
+  <div class="timer-track" id="timerTrack"><div class="timer-fill" id="timerFill"></div></div>
+
+  <main class="stage" id="stageEl">
+    <div class="stage-label" id="stageLabel">STAGE 1</div>
+    <div id="waitingMsg" class="hidden"></div>
+    <div id="liveboard">
+      <div class="lb-head">
+        <span class="lb-lbl">first to</span>
+        <span class="lb-goal" id="lbGoal">–</span>
+      </div>
+      <div class="lb-rows" id="lbRows"></div>
+    </div>
+  </main>
+  <div class="word" id="word"></div>
+  <div id="placement" class="hidden"></div>
+
+  <div class="options" id="options"></div>
+
+  <div class="overlay" id="overlay">
+
+    <!-- MAIN MENU -->
+    <div class="card menu-card" id="cardMenu">
+      <h1 class="mega">STROOP</h1>
+      <div class="menu-content">
+        <div class="tagline">guess the ink, not the word</div>
+        <button class="go-btn" id="soloBtn">PLAY SOLO</button>
+        <button class="go-btn ghost" id="createBtn">CREATE LOBBY</button>
+        <button class="go-btn ghost" id="joinBtn">JOIN LOBBY</button>
+        <button class="small-link" id="bossTestBtn">test: jump to stage 4</button>
+      </div>
+    </div>
+
+    <!-- CREATE -->
+    <div class="card hidden" id="cardCreate">
+      <div class="eyebrow">New lobby</div>
+      <h1>Pick a name</h1>
+      <div class="field">
+        <label>Display name</label>
+        <input id="createName" maxlength="16" placeholder="e.g. RIVER" />
+      </div>
+      <div class="err-msg" id="createErr"></div>
+      <button class="go-btn" id="createSubmit">CREATE</button>
+      <button class="small-link" id="createBack">← back</button>
+    </div>
+
+    <!-- JOIN -->
+    <div class="card hidden" id="cardJoin">
+      <div class="eyebrow">Join a lobby</div>
+      <h1>Enter the code</h1>
+      <div class="field">
+        <label>Lobby code</label>
+        <input id="joinCode" maxlength="6" placeholder="e.g. 7K3QM" style="text-transform:uppercase" />
+      </div>
+      <div class="field">
+        <label>Display name</label>
+        <input id="joinName" maxlength="16" placeholder="e.g. RIVER" />
+      </div>
+      <div class="err-msg" id="joinErr"></div>
+      <button class="go-btn" id="joinSubmit">JOIN</button>
+      <button class="small-link" id="joinBack">← back</button>
+    </div>
+
+    <!-- LOBBY -->
+    <div class="card hidden" id="cardLobby">
+      <div class="eyebrow">Lobby code</div>
+      <div class="code-display" id="lobbyCodeDisplay">------</div>
+      <button class="go-btn ghost" id="copyCodeBtn" style="margin-top:2px;">COPY CODE</button>
+      <div class="link-row">
+        <input id="lobbyLink" readonly />
+        <button id="copyLinkBtn">COPY</button>
+      </div>
+      <p style="margin-top:16px;">Everyone sees the exact same word and color at the same moment. Fastest correct answer scores the most.</p>
+      <div class="stage-brief">
+        <b>Stage 1</b> — 3 choices.<br>
+        <b>Stage 2</b> — 5 choices, tinted backdrop. Starts when someone passes ⅓ of the goal.<br>
+        <b>Stage 3</b> — 9 choices in a grid, flashing backdrop, a spoken color misleads you. Starts at ⅔.
+      </div>
+      <div class="field">
+        <label>Points to win (optional — defaults to 10 × players)</label>
+        <input id="targetScoreInput" type="number" min="1" placeholder="auto" />
+      </div>
+      <div class="roster" id="lobbyRoster"></div>
+      <button class="go-btn hidden" id="lobbyPlayBtn">START GAME</button>
+      <div class="warn hidden" id="lobbyWaitNote">Waiting for the host to start the game…</div>
+      <button class="small-link" id="lobbyLeaveBtn">leave lobby</button>
+    </div>
+
+    <!-- SOLO BRIEF -->
+    <div class="card hidden" id="cardBrief">
+      <div class="eyebrow">Before you start</div>
+      <h1>Three stages</h1>
+      <div class="stage-brief">
+        <b>Stage 1</b> — 3 choices.<br>
+        <b>Stage 2</b> — 5 choices, tinted backdrop.<br>
+        <b>Stage 3</b> — 9 choices in a grid, flashing backdrop, a spoken color misleads you.
+      </div>
+      <button class="go-btn" id="briefStart">BEGIN SESSION</button>
+      <div class="warn">Stage 3 includes flashing color and audio — skip it if that's not for you.</div>
+    </div>
+
+    <!-- END -->
+    <div class="card hidden" id="cardOver">
+      <div class="eyebrow" id="overEyebrow">Session ended</div>
+      <h1 id="overHeadline">Session complete</h1>
+      <div class="stat-row">
+        <div class="stat"><b id="finalScore">0</b><span>SCORE</span></div>
+        <div class="stat"><b id="finalStage">1</b><span>STAGE</span></div>
+        <div class="stat" id="finalBestStat"><b id="finalBest">0</b><span>BEST</span></div>
+      </div>
+      <div class="roster hidden" id="overRoster"></div>
+      <button class="go-btn" id="restartBtn">RUN AGAIN</button>
+      <div class="warn hidden" id="overWaitNote">Waiting for the host to start a new match…</div>
+      <button class="go-btn ghost hidden" id="returnBtn">RETURN</button>
+      <button class="small-link hidden" id="overLeaveBtn">leave lobby</button>
+    </div>
+  </div>
+</div>
+
+<!-- STAGE 4 — boss layer (solo only) -->
+<div id="boss" class="hidden">
+  <div id="bossTint"></div>
+  <div id="bossMsg"></div>
+  <div id="bossLogo"><span class="bl-bob" id="bossLogoBob"><span class="bl-txt" id="bossLogoTxt">STROOP</span></span></div>
+  <div id="bossHp"><div id="bossHpFill"></div></div>
+  <div id="bossTimer"><div id="bossTimerFill"></div></div>
+  <div id="bossBegin">BEGIN</div>
+  <div id="bossArena"></div>
+  <div id="bossLives"><span></span><span></span><span></span></div>
+  <div id="bossW">W</div>
+  <div id="bossHint">click anywhere to return</div>
+</div>
+
+<script>
+(function(){
+  /* =========================================================
+     COLORS — 9 total. `tint` is the pale backdrop version.
+     ========================================================= */
+  const COLORS = [
+    {name:'RED',    hex:'#e03131', tint:'#f0bcbc'},
+    {name:'CYAN',   hex:'#00FFFF', tint:'#bdefef'},
+    {name:'YELLOW', hex:'#FCF55F', tint:'#f3edb8'},
+    {name:'GREEN',  hex:'#2f9e44', tint:'#b3ddbf'},
+    {name:'BLUE',   hex:'#1c3faa', tint:'#b8c4e8'},
+    {name:'PURPLE', hex:'#862e9c', tint:'#d3b6e0'},
+    {name:'PINK',   hex:'#FFB6C1', tint:'#f6dbe0'},
+    {name:'BLACK',  hex:'#14161c', tint:'#b9b9be'},
+    {name:'WHITE',  hex:'#ffffff', tint:'#eeeee9'},
+  ];
+  const byName = n => COLORS.find(c => c.name === n);
+
+  const BASE_TIME = 3300;
+  const TIME_DECREMENT = 70;
+  const STAGE3_DECREMENT = 50;   // stage 3 resets to BASE_TIME then decays slower
+  const MIN_TIME = 1200;
+  const LIVES_START = 3;          // solo only
+  const SOLO_STAGE2_AT = 5;
+  const SOLO_STAGE3_AT = 12;
+  const SOLO_STAGE4_AT = SOLO_STAGE3_AT + 20;   // 20 correct stage 3 answers -> boss
+  const ROUND_GRACE_MS = 1000;
+  const REVEAL_DELAY_MS = 1400;   // normal between-round gap
+  const INTRO_DELAY_MS  = 5200;   // longer gap on round 1 to fit the full transition + READY/SET/GO
+  const ROUND_POLL_MS = 300;
+
+  const $ = id => document.getElementById(id);
+  const app = $('app'), bgTint = $('bgTint');
+  const wordEl = $('word'), optionsEl = $('options'), timerFill = $('timerFill');
+  const scoreEl = $('score'), stageNumEl = $('stageNum'), stageLabelEl = $('stageLabel');
+  const bestEl = $('best'), bestMetric = $('bestMetric'), livesEl = $('lives');
+  const goalMetric = $('goalMetric'), goalScoreEl = $('goalScore');
+  const overlay = $('overlay'), waitingMsg = $('waitingMsg');
+  const liveboard = $('liveboard'), lbRows = $('lbRows'), lbGoal = $('lbGoal');
+  const placementEl = $('placement');
+  const hud = $('hud'), timerTrack = $('timerTrack'), stageEl = $('stageEl');
+  const cards = {
+    menu:$('cardMenu'), create:$('cardCreate'), join:$('cardJoin'),
+    lobby:$('cardLobby'), brief:$('cardBrief'), over:$('cardOver')
+  };
+
+  let score = 0, lives = LIVES_START, best = 0;
+  let timerTimeout = null, revealTimeout = null, countdownTimers = [];
+  let flashInterval = null;
+
+  const playerId = 'p_' + Math.random().toString(36).slice(2, 10);
+  let lobbyCode = null, playerName = null, isHost = false, inGame = false;
+  let leaderboardPoll = null, roundPoll = null, hostLoop = null;
+  let leaderboardTickBusy = false, roundPollBusy = false, hostLoopBusy = false;
+  let lastRoundDoc = null, myAnsweredThisRound = false, matchFinishedShown = false;
+
+  const pick = a => a[Math.floor(Math.random()*a.length)];
+  function shuffle(arr){
+    const a = arr.slice();
+    for(let i=a.length-1;i>0;i--){ const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]]; }
+    return a;
+  }
+  const wait = ms => new Promise(r => setTimeout(r, ms));
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+  }
+  function showCard(name){
+    Object.values(cards).forEach(c => c.classList.add('hidden'));
+    cards[name].classList.remove('hidden');
+    overlay.classList.remove('hidden');
+  }
+
+  /* ================= click sound ================= */
+  let audioCtx = null;
+  function playClickSound(){
+    try{
+      if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if(audioCtx.state === 'suspended') audioCtx.resume();
+      const t = audioCtx.currentTime;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.setValueAtTime(660, t);
+      osc.frequency.exponentialRampToValueAtTime(330, t + 0.07);
+      gain.gain.setValueAtTime(0.0001, t);
+      gain.gain.exponentialRampToValueAtTime(0.16, t + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t + 0.11);
+      osc.connect(gain); gain.connect(audioCtx.destination);
+      osc.start(t); osc.stop(t + 0.13);
+    }catch(e){}
+  }
+
+  /* ================= STORAGE ADAPTER (Firebase) ================= */
+  function fbReady(){ return !!window.__fbReady && !!window.fbApi; }
+  function requireFb(){
+    if(!fbReady()){
+      const d = window.__fbInitError ? (': ' + window.__fbInitError.message) : '';
+      throw new Error('Multiplayer backend not ready' + d);
+    }
+  }
+  function loadBest(){
+    try{ const v = localStorage.getItem('stroop-best-score'); if(v) best = parseInt(v,10) || 0; }catch(e){}
+    bestEl.textContent = best;
+  }
+  function saveBest(){
+    try{ localStorage.setItem('stroop-best-score', String(best)); }catch(e){}
+  }
+  async function getMeta(){
+    if(!lobbyCode || !fbReady()) return null;
+    try{ return await window.fbApi.getMeta(lobbyCode); }catch(e){ return null; }
+  }
+  async function setMeta(partial){
+    if(!fbReady()) return;
+    try{ await window.fbApi.setMeta(lobbyCode, partial); }catch(e){}
+  }
+  async function getRoundDoc(){
+    if(!lobbyCode || !fbReady()) return null;
+    try{ return await window.fbApi.getRound(lobbyCode); }catch(e){ return null; }
+  }
+  async function setRoundDoc(data){
+    if(!fbReady()) return;
+    try{ await window.fbApi.setRound(lobbyCode, data); }catch(e){}
+  }
+  async function createLobby(name){
+    requireFb();
+    const code = genCode();
+    lobbyCode = code;
+    await window.fbApi.setMeta(code, {createdAt:Date.now(), hostId:playerId, status:'waiting', roundNumber:0});
+    await window.fbApi.setPlayer(code, playerId, {name, score:0, answeredRound:-1, correct:false, elapsedMs:0, updatedAt:Date.now()});
+    isHost = true;
+    return code;
+  }
+  async function joinLobbyByCode(code, name){
+    requireFb();
+    lobbyCode = code;
+    const meta = await getMeta();
+    if(!meta){ lobbyCode = null; throw new Error('Lobby not found. Check the code.'); }
+    await window.fbApi.setPlayer(code, playerId, {name, score:0, answeredRound:-1, correct:false, elapsedMs:0, updatedAt:Date.now()});
+    isHost = (meta.hostId === playerId);
+    return code;
+  }
+  async function updateMyPlayerDoc(extra){
+    if(!lobbyCode || !fbReady()) return;
+    try{
+      await window.fbApi.setPlayer(lobbyCode, playerId, Object.assign({
+        name:playerName, score, answeredRound:lastRoundDoc ? lastRoundDoc.roundNumber : -1,
+        correct:false, elapsedMs:0, updatedAt:Date.now()
+      }, extra || {}));
+    }catch(e){}
+  }
+  async function setPlayerDocById(id, data){
+    if(!lobbyCode || !fbReady()) return;
+    try{ await window.fbApi.setPlayer(lobbyCode, id, data); }catch(e){}
+  }
+  async function fetchLobbyPlayers(){
+    if(!lobbyCode || !fbReady()) return [];
+    try{
+      const players = await window.fbApi.getPlayers(lobbyCode);
+      return players.sort((a,b) => b.score - a.score);
+    }catch(e){ return []; }
+  }
+  /* ================= END STORAGE ADAPTER ================= */
+
+  function genCode(){
+    const chars = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let c=''; for(let i=0;i<5;i++) c += chars[Math.floor(Math.random()*chars.length)];
+    return c;
+  }
+  async function getMyPlayerDoc(){
+    const players = await fetchLobbyPlayers();
+    return players.find(p => p.id === playerId) || null;
+  }
+  async function settledPlayers(){
+    const first = await fetchLobbyPlayers();
+    await wait(500);
+    const second = await fetchLobbyPlayers();
+    return second.length >= first.length ? second : first;
+  }
+
+  /* ================= rosters ================= */
+  function renderRoster(container, players){
+    container.innerHTML = '';
+    if(!players.length){
+      container.innerHTML = '<div class="roster-row"><span>waiting for players…</span></div>';
+      return;
+    }
+    players.forEach(p => {
+      const row = document.createElement('div');
+      row.className = 'roster-row';
+      row.innerHTML = `<span>${escapeHtml(p.name)}</span><span>${p.score}</span>`;
+      container.appendChild(row);
+    });
+  }
+  function renderLiveboard(players){
+    lbRows.innerHTML = '';
+    players.slice(0,6).forEach((p, i) => {
+      const idle = (Date.now() - (p.updatedAt||0)) > 30000;
+      const row = document.createElement('div');
+      row.className = 'lb-row'
+        + (idle ? ' idle' : '')
+        + (p.id === playerId ? ' me' : '')
+        + (i === 0 && p.score > 0 ? ' leader' : '');
+      row.innerHTML =
+        `<span class="lb-rank">${i+1}</span>` +
+        `<span class="lb-name">${escapeHtml(p.name)}</span>` +
+        `<span class="lb-pts">${p.score}</span>`;
+      lbRows.appendChild(row);
+    });
+  }
+  function setGoalDisplay(target){
+    goalScoreEl.textContent = target;
+    lbGoal.textContent = target;
+  }
+  function showScorePop(delta){
+    if(delta <= 0) return;
+    const pop = document.createElement('div');
+    pop.className = 'score-pop';
+    pop.textContent = '+' + delta;
+    scoreEl.parentElement.appendChild(pop);
+    setTimeout(() => pop.remove(), 950);
+  }
+  async function syncMyScoreAndMaybePop(){
+    const mine = await getMyPlayerDoc();
+    if(mine){
+      const delta = mine.score - score;
+      score = mine.score;
+      scoreEl.textContent = score;
+      if(delta > 0) showScorePop(delta);
+      // The host has now applied real points for the last round — correct
+      // the provisional placement message if our local guess was off.
+      if(delta !== 0 || placementRound >= 0) reconcilePlacement(delta);
+    }
+  }
+
+  /* ================= polling ================= */
+  function startLeaderboardPolling(){
+    stopLeaderboardPolling();
+    liveboard.classList.add('show');
+    const tick = async () => {
+      if(leaderboardTickBusy) return;
+      leaderboardTickBusy = true;
+      try{
+        const players = await fetchLobbyPlayers();
+        renderLiveboard(players);
+        renderRoster($('lobbyRoster'), players);
+        if(await checkAndShowFinished()) return;
+        const meta = await getMeta();
+        if(meta && meta.targetScore) setGoalDisplay(meta.targetScore);
+        if(!isHost && lobbyCode && !inGame && meta && meta.status === 'active'){
+          inGame = true;
+          await enterActiveGameAsGuest();
+        }
+      } finally { leaderboardTickBusy = false; }
+    };
+    tick();
+    leaderboardPoll = setInterval(tick, 900);
+  }
+  function stopLeaderboardPolling(){
+    if(leaderboardPoll) clearInterval(leaderboardPoll);
+    leaderboardPoll = null;
+    liveboard.classList.remove('show');
+  }
+  async function checkAndShowFinished(){
+    if(matchFinishedShown || !lobbyCode) return false;
+    const meta = await getMeta();
+    if(meta && meta.status === 'finished'){
+      matchFinishedShown = true;
+      stopRoundPolling();
+      if(isHost) stopHostLoop();
+      await syncMyScoreAndMaybePop();
+      await showLobbyFinished(meta);
+      return true;
+    }
+    return false;
+  }
+  function startRoundPolling(){
+    stopRoundPolling();
+    const tick = async () => {
+      if(roundPollBusy) return;
+      roundPollBusy = true;
+      try{
+        if(await checkAndShowFinished()) return;
+        const doc = await getRoundDoc();
+        if(doc && (!lastRoundDoc || doc.roundNumber !== lastRoundDoc.roundNumber)){
+          await syncMyScoreAndMaybePop();
+          renderRoundFromDoc(doc);
+        }
+      } finally { roundPollBusy = false; }
+    };
+    tick();
+    roundPoll = setInterval(tick, ROUND_POLL_MS);
+  }
+  function stopRoundPolling(){
+    if(roundPoll) clearInterval(roundPoll);
+    roundPoll = null;
+  }
+
+  /* ================= visuals ================= */
+  function numButtonsForStage(s){ return s === 1 ? 3 : s === 2 ? 5 : 9; }
+  function updateStageUI(stage){
+    stageNumEl.textContent = stage;
+    stageLabelEl.textContent = 'STAGE ' + stage;
+  }
+  function stopFlash(){ if(flashInterval) clearInterval(flashInterval); flashInterval = null; }
+
+  function applyBackdrop(stage, inkName, tintName){
+    stopFlash();
+    if(stage === 1){ bgTint.style.opacity = 0; return; }
+    if(stage === 2){
+      const c = tintName ? byName(tintName) : pick(COLORS.filter(x => x.name !== inkName));
+      bgTint.style.backgroundColor = (c || COLORS[0]).tint;
+      bgTint.style.opacity = 1;
+      return;
+    }
+    // stage 3 — gentle flashing through pale tints, never the ink color
+    const pool = COLORS.filter(x => x.name !== inkName);
+    bgTint.style.backgroundColor = pick(pool).tint;
+    bgTint.style.opacity = 1;
+    flashInterval = setInterval(() => {
+      bgTint.style.backgroundColor = pick(pool).tint;
+    }, 620);
+  }
+
+  function speakName(name){
+    if(!name || !('speechSynthesis' in window)) return;
+    try{
+      const u = new SpeechSynthesisUtterance(name);
+      u.rate = 1; u.pitch = 1; u.volume = 0.85;
+      speechSynthesis.cancel();
+      speechSynthesis.speak(u);
+    }catch(e){}
+  }
+
+  function renderChallenge(stage, wordName, inkHex, optionNames, optionInk, onSelect){
+    wordEl.classList.remove('countdown','pulse-ok','pulse-bad');
+    wordEl.textContent = wordName;
+    wordEl.style.color = inkHex;
+
+    optionsEl.innerHTML = '';
+    optionsEl.classList.toggle('grid3', stage === 3);
+
+    optionNames.forEach((name, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'opt';
+      btn.textContent = name;
+      if(stage === 3 && optionInk && optionInk[i]){
+        const c = byName(optionInk[i]);
+        if(c){
+          btn.style.color = c.hex;
+          btn.style.borderColor = c.hex;
+          // a white label on a white button is invisible — give it a dark plate instead
+          if(c.name === 'WHITE') btn.style.background = '#14161c';
+        }
+      }
+      btn.addEventListener('click', () => { playClickSound(); onSelect(name, btn); });
+      optionsEl.appendChild(btn);
+    });
+  }
+
+  function startTimerBar(remainingMs, totalMs, onTimeout){
+    clearTimeout(timerTimeout);
+    const frac = Math.max(0, Math.min(1, remainingMs / totalMs));
+    timerFill.style.transition = 'none';
+    timerFill.style.transform = `scaleX(${frac})`;
+    void timerFill.offsetWidth;
+    timerFill.style.transition = `transform ${Math.max(0,remainingMs)}ms linear`;
+    timerFill.style.transform = 'scaleX(0)';
+    timerTimeout = setTimeout(onTimeout, Math.max(0, remainingMs));
+  }
+
+  function renderLives(){
+    livesEl.innerHTML = '';
+    for(let i=0;i<LIVES_START;i++){
+      const s = document.createElement('span');
+      s.textContent = '●';
+      s.className = i < lives ? 'alive' : 'lost';
+      livesEl.appendChild(s);
+    }
+  }
+
+  function clearCountdown(){
+    countdownTimers.forEach(t => clearTimeout(t));
+    countdownTimers = [];
+  }
+  function showCountdownWord(text){
+    wordEl.classList.remove('pulse-ok','pulse-bad','countdown');
+    wordEl.style.color = '';
+    wordEl.textContent = text;
+    void wordEl.offsetWidth; // commits the class removal + new text before we restart the animation
+    wordEl.classList.add('countdown');
+  }
+  // Plays READY / SET / GO so that GO lands right before reveal.
+  function runIntroCountdown(msUntilReveal){
+    clearCountdown();
+    if(msUntilReveal < 2200){
+      showCountdownWord('GET READY');
+      return;
+    }
+    const goAt   = Math.max(0, msUntilReveal - 750);
+    const setAt  = Math.max(0, msUntilReveal - 1550);
+    const readyAt= Math.max(0, msUntilReveal - 2350);
+    countdownTimers.push(setTimeout(() => showCountdownWord('READY'), readyAt));
+    countdownTimers.push(setTimeout(() => showCountdownWord('SET'),   setAt));
+    countdownTimers.push(setTimeout(() => showCountdownWord('GO'),    goAt));
+  }
+
+  /* ================= transition into / out of play ================= */
+  async function transitionIntoPlay(){
+    // 1. Fade out the menu/end-screen content in place — opacity only,
+    //    no translation, no shrinking panel.
+    const activeCard = overlay.querySelector('.card:not(.hidden)');
+    if(activeCard) activeCard.classList.add('card-fade-out');
+    await wait(380);
+
+    // 2. Once the content is gone, crossfade the full-screen backdrop
+    //    from dark to off-white — a flat color fade, nothing moves.
+    app.classList.add('light');
+    overlay.classList.add('bg-crossfade');
+    await wait(800);
+
+    // 3. The overlay's backdrop now matches #app's own light background
+    //    exactly, so hiding it is a seamless handoff, not a cut.
+    overlay.classList.add('hidden');
+    overlay.classList.remove('bg-crossfade');
+    if(activeCard) activeCard.classList.remove('card-fade-out');
+
+    // 4. Animate the HUD/timer/stage/options into view.
+    app.classList.add('in-game');
+    [hud, timerTrack].forEach(el => { el.classList.remove('enter-top'); void el.offsetWidth; el.classList.add('enter-top'); });
+    [stageEl, wordEl, optionsEl].forEach(el => { el.classList.remove('enter-bottom'); void el.offsetWidth; el.classList.add('enter-bottom'); });
+    await wait(420);
+  }
+  function transitionOutOfPlay(){
+    app.classList.remove('in-game');
+    stopFlash();
+    clearCountdown();
+    hidePlacement();
+    bgTint.style.opacity = 0;
+    app.classList.remove('light');
+    optionsEl.innerHTML = '';
+    optionsEl.classList.remove('grid3');
+    wordEl.textContent = '';
+    wordEl.classList.remove('countdown','pulse-ok','pulse-bad');
+    timerFill.style.transition = 'none';
+    timerFill.style.transform = 'scaleX(1)';
+  }
+
+  /* ================= round construction ================= */
+  // stage3StartRound: the round number on which stage 3 first began. Once
+  // stage 3 starts the clock resets to BASE_TIME and decays more slowly.
+  function computeTimerDuration(roundNumber, stage, stage3StartRound){
+    if(stage === 3 && stage3StartRound){
+      const roundsIn = Math.max(0, roundNumber - stage3StartRound);
+      return Math.max(MIN_TIME, BASE_TIME - roundsIn * STAGE3_DECREMENT);
+    }
+    return Math.max(MIN_TIME, BASE_TIME - (roundNumber-1) * TIME_DECREMENT);
+  }
+
+  function buildRoundData(roundNumber, stage, stage3StartRound){
+    const n = numButtonsForStage(stage);
+    const wordMeaning = pick(COLORS);
+    const inkColor = pick(COLORS.filter(c => c.name !== wordMeaning.name));
+    let options;
+    if(n >= COLORS.length){
+      options = shuffle(COLORS);
+    } else {
+      const pool = COLORS.filter(c => c.name !== inkColor.name);
+      options = shuffle([inkColor, ...shuffle(pool).slice(0, n-1)]);
+    }
+    let optionInk = null;
+    if(stage === 3){
+      optionInk = options.map(o => pick(COLORS.filter(c => c.name !== o.name)).name);
+    }
+    const tintName = stage >= 2 ? pick(COLORS.filter(c => c.name !== inkColor.name)).name : null;
+    const audioName = stage === 3 ? pick(COLORS.filter(c => c.name !== inkColor.name)).name : null;
+    const timerDuration = computeTimerDuration(roundNumber, stage, stage3StartRound);
+    return {
+      roundNumber, stage,
+      wordName: wordMeaning.name, inkName: inkColor.name, inkHex: inkColor.hex,
+      options: options.map(c => c.name), optionInk, tintName, audioName,
+      timerDuration,
+      startedAt: Date.now() + (roundNumber === 1 ? INTRO_DELAY_MS : REVEAL_DELAY_MS)
+    };
+  }
+
+  /* =========================================================
+     SOLO  (keeps lives — it's the only way a solo run ends)
+     ========================================================= */
+  let soloCorrect = 0, soloRound = 0, soloActive = false;
+
+  function soloStage(){
+    if(soloCorrect >= SOLO_STAGE4_AT) return 4;
+    if(soloCorrect >= SOLO_STAGE3_AT) return 3;
+    if(soloCorrect >= SOLO_STAGE2_AT) return 2;
+    return 1;
+  }
+
+  function soloNewRound(){
+    soloRound++;
+    const stage = soloStage();
+    const data = buildRoundData(soloRound, stage);
+    updateStageUI(stage);
+    applyBackdrop(stage, data.inkName, data.tintName);
+    soloActive = true;
+    renderChallenge(stage, data.wordName, data.inkHex, data.options, data.optionInk,
+      (name) => soloAnswer(name === data.inkName, name, data.inkName));
+    if(data.audioName) speakName(data.audioName);
+    // Stage 3 resets the clock to full and then decays at the slower rate.
+    const dur = stage === 3
+      ? Math.max(MIN_TIME, BASE_TIME - (soloCorrect - SOLO_STAGE3_AT) * STAGE3_DECREMENT)
+      : Math.max(MIN_TIME, BASE_TIME - soloCorrect * TIME_DECREMENT);
+    startTimerBar(dur, dur, () => { if(soloActive) soloAnswer(false, null, data.inkName); });
+  }
+
+  function soloAnswer(isCorrect, selectedName, correctName){
+    if(!soloActive) return;
+    soloActive = false;
+    clearTimeout(timerTimeout);
+    timerFill.style.transition = 'none';
+
+    Array.from(optionsEl.children).forEach(b => {
+      b.disabled = true;
+      if(b.textContent === correctName) b.classList.add('correct');
+      if(!isCorrect && selectedName && b.textContent === selectedName) b.classList.add('wrong');
+    });
+
+    if(isCorrect){
+      wordEl.classList.add('pulse-ok');
+      soloCorrect++;
+      score += 100 + Math.floor(soloCorrect/2)*10;
+      scoreEl.textContent = score;
+      setTimeout(soloCorrect >= SOLO_STAGE4_AT ? enterStage4FromStage3 : soloNewRound, 460);
+    } else {
+      wordEl.classList.add('pulse-bad');
+      lives--;
+      renderLives();
+      if(lives <= 0) setTimeout(endSoloSession, 600);
+      else setTimeout(soloNewRound, 650);
+    }
+  }
+
+  async function startSoloGame(){
+    lobbyCode = null; playerName = null; isHost = false; inGame = false;
+    stopLeaderboardPolling(); stopRoundPolling(); stopHostLoop();
+    score = 0; lives = LIVES_START; soloCorrect = 0; soloRound = 0;
+    scoreEl.textContent = 0;
+    renderLives();
+    livesEl.classList.remove('hidden');
+    bestMetric.classList.remove('hidden');
+    goalMetric.classList.add('hidden');
+    waitingMsg.classList.add('hidden');
+    updateStageUI(1);
+
+    await transitionIntoPlay();
+    runIntroCountdown(2600);
+    await wait(2600);
+    soloNewRound();
+  }
+
+  async function endSoloSession(){
+    soloActive = false;
+    transitionOutOfPlay();
+    if(score > best){ best = score; bestEl.textContent = best; await saveBest(); }
+    $('overEyebrow').textContent = 'Session ended';
+    $('overHeadline').classList.remove('result-letter');
+    $('overHeadline').textContent = 'Session complete';
+    $('finalScore').textContent = score;
+    $('finalStage').textContent = soloStage();
+    $('finalBest').textContent = best;
+    $('finalBestStat').classList.remove('hidden');
+    $('overRoster').classList.add('hidden');
+    $('restartBtn').classList.remove('hidden');
+    $('overWaitNote').classList.add('hidden');
+    $('overLeaveBtn').classList.add('hidden');
+    $('returnBtn').classList.remove('hidden');
+    showCard('over');
+  }
+
+  /* =========================================================
+     LOBBY  (no lives — runs until someone hits the target)
+     ========================================================= */
+  function stageForProgress(topScore, target){
+    if(!target) return 1;
+    if(topScore >= target * 2/3) return 3;
+    if(topScore >= target / 3) return 2;
+    return 1;
+  }
+
+  async function prepLobbyPlaySurface(){
+    score = 0;
+    scoreEl.textContent = 0;
+    livesEl.classList.add('hidden');   // no lives in multiplayer
+    bestMetric.classList.add('hidden');
+    goalMetric.classList.remove('hidden');
+    waitingMsg.classList.add('hidden');
+    updateStageUI(1);
+    lastRoundDoc = null;
+    myAnsweredThisRound = false;
+    matchFinishedShown = false;
+    await transitionIntoPlay();
+  }
+
+  async function startLobbySession(){
+    await prepLobbyPlaySurface();
+    await updateMyPlayerDoc({ score:0, answeredRound:-1, correct:false, elapsedMs:0 });
+    const meta0 = await getMeta();
+    if(!meta0 || meta0.status !== 'active' || !meta0.roundNumber){
+      const players = await settledPlayers();
+      const target = (meta0 && meta0.customTargetScore) ? meta0.customTargetScore : 10 * Math.max(1, players.length);
+      const round = buildRoundData(1, 1);
+      await setRoundDoc(round);
+      await setMeta({ status:'active', roundNumber:1, targetScore:target, winnerId:null, winnerName:null, stage3StartRound:null });
+      setGoalDisplay(target);
+    }
+    startHostLoop();
+    startRoundPolling();
+    startLeaderboardPolling();
+  }
+
+  async function enterActiveGameAsGuest(){
+    await prepLobbyPlaySurface();
+    await updateMyPlayerDoc({ score:0, answeredRound:-1, correct:false, elapsedMs:0 });
+    startRoundPolling();
+  }
+
+  async function restartInLobby(){
+    matchFinishedShown = false;
+    inGame = true;
+    await prepLobbyPlaySurface();
+    const meta0 = await getMeta();
+    const players = await settledPlayers();
+    for(const p of players){
+      await setPlayerDocById(p.id, { name:p.name, score:0, answeredRound:-1, correct:false, elapsedMs:0, updatedAt:Date.now() });
+    }
+    const target = (meta0 && meta0.customTargetScore) ? meta0.customTargetScore : 10 * Math.max(1, players.length);
+    const round = buildRoundData(1, 1);
+    await setRoundDoc(round);
+    await setMeta({ status:'active', roundNumber:1, targetScore:target, winnerId:null, winnerName:null, stage3StartRound:null });
+    setGoalDisplay(target);
+    startHostLoop();
+    startRoundPolling();
+    startLeaderboardPolling();
+  }
+
+  function renderRoundFromDoc(doc){
+    lastRoundDoc = doc;
+    myAnsweredThisRound = false;
+    hidePlacement();
+    clearTimeout(revealTimeout);
+    clearCountdown();
+    stopFlash();
+
+    updateStageUI(doc.stage);
+    optionsEl.innerHTML = '';
+    optionsEl.classList.toggle('grid3', doc.stage === 3);
+
+    // park the timer bar full while the countdown runs
+    timerFill.style.transition = 'none';
+    timerFill.style.transform = 'scaleX(1)';
+
+    const untilReveal = doc.startedAt - Date.now();
+    if(untilReveal > 120){
+      waitingMsg.classList.add('hidden');
+      runIntroCountdown(untilReveal);
+      revealTimeout = setTimeout(() => revealRound(doc), untilReveal);
+    } else {
+      revealRound(doc);
+    }
+  }
+
+  function revealRound(doc){
+    if(doc !== lastRoundDoc) return;
+    clearCountdown();
+    waitingMsg.classList.add('hidden');
+    applyBackdrop(doc.stage, doc.inkName, doc.tintName);
+    renderChallenge(doc.stage, doc.wordName, doc.inkHex, doc.options, doc.optionInk,
+      (name, btn) => lobbyAnswer(name, btn, doc));
+    if(doc.audioName) speakName(doc.audioName);
+    const remaining = doc.timerDuration - (Date.now() - doc.startedAt);
+    startTimerBar(Math.max(0, remaining), doc.timerDuration, () => lobbyAnswer(null, null, doc));
+  }
+
+  function lobbyAnswer(selectedName, btnEl, doc){
+    if(myAnsweredThisRound || !doc || doc !== lastRoundDoc) return;
+    myAnsweredThisRound = true;
+    clearTimeout(timerTimeout);
+    timerFill.style.transition = 'none';
+
+    const correctName = doc.inkName;
+    Array.from(optionsEl.children).forEach(b => {
+      b.disabled = true;
+      if(b.textContent === correctName) b.classList.add('correct');
+    });
+    const correct = selectedName === correctName;
+    if(!correct && selectedName && btnEl) btnEl.classList.add('wrong');
+
+    const elapsedMs = Date.now() - doc.startedAt;
+    wordEl.classList.add(correct ? 'pulse-ok' : 'pulse-bad');
+
+    // Write my answer first so other clients can rank me, then show my own
+    // provisional placement immediately from whatever data is already local.
+    updateMyPlayerDoc({ answeredRound: doc.roundNumber, correct, elapsedMs });
+    showPlacementFeedback({
+      correct,
+      timedOut: selectedName === null,
+      elapsedMs,
+      roundNumber: doc.roundNumber
+    });
+
+    waitingMsg.classList.add('hidden');
+  }
+
+  /* ---------- placement feedback ----------
+     Points are finalised by the host once the round resolves, so the exact
+     placement of an early answerer genuinely isn't knowable at click time.
+     We show a provisional placement computed from the players who have
+     already submitted (anyone faster than you has almost always written
+     their answer before you clicked), then reconcile against the host's
+     authoritative score once it lands. */
+  const ORDINALS = ['first','second','third','fourth','fifth','sixth','seventh','eighth','ninth','tenth'];
+  let placementRound = -1, placementHideTimer = null;
+
+  function renderPlacement(text){
+    placementEl.textContent = text;
+    placementEl.classList.remove('hidden','show');
+    void placementEl.offsetWidth;
+    placementEl.classList.add('show');
+    clearTimeout(placementHideTimer);
+    placementHideTimer = setTimeout(() => placementEl.classList.add('hidden'), 4000);
+  }
+  function hidePlacement(){
+    clearTimeout(placementHideTimer);
+    placementEl.classList.add('hidden');
+    placementEl.classList.remove('show');
+  }
+  function placementLabel(rank, total){
+    if(total > 1 && rank === total) return 'last!';
+    return (ORDINALS[rank-1] || `#${rank}`) + '!';
+  }
+
+  async function showPlacementFeedback({correct, timedOut, elapsedMs, roundNumber}){
+    placementRound = roundNumber;
+    if(timedOut){ renderPlacement("bro didn't click anything 😭 +0"); return; }
+    if(!correct){ renderPlacement('incorrect 🤡 +0'); return; }
+
+    // Provisional: rank among everyone who has submitted for this round so far.
+    let players = [];
+    try{ players = await fetchLobbyPlayers(); }catch(e){}
+    if(placementRound !== roundNumber) return; // a new round already started
+
+    const total = Math.max(1, players.length);
+    const faster = players.filter(p =>
+      p.id !== playerId &&
+      (p.answeredRound || -1) >= roundNumber &&
+      (p.elapsedMs || 0) < elapsedMs
+    ).length;
+    const rank = faster + 1;
+    renderPlacement(`${placementLabel(rank, total)} +${Math.max(0, total - faster)}`);
+  }
+
+  // Called once the host's real points land, so a mis-guessed provisional
+  // placement corrects itself rather than lying to the player.
+  function reconcilePlacement(actualGain){
+    if(placementEl.classList.contains('hidden')) return;
+    const shown = placementEl.textContent.match(/\+(\d+)$/);
+    if(!shown || parseInt(shown[1],10) === actualGain) return;
+    if(actualGain <= 0){ renderPlacement('incorrect 🤡 +0'); return; }
+    placementEl.textContent = placementEl.textContent.replace(/\+\d+$/, '+' + actualGain);
+  }
+
+  /* ---------- host: scoring + advancement ---------- */
+  function startHostLoop(){
+    stopHostLoop();
+    if(!isHost) return;
+    hostLoop = setInterval(async () => {
+      if(hostLoopBusy) return;
+      hostLoopBusy = true;
+      try{
+        const meta = await getMeta();
+        if(!meta || meta.status !== 'active') return;
+        const round = await getRoundDoc();
+        if(!round) return;
+        const players = await fetchLobbyPlayers();
+        if(!players.length) return;
+
+        const allAnswered = players.every(p => (p.answeredRound || -1) >= round.roundNumber);
+        const elapsed = Date.now() - round.startedAt;
+        const timedOut = elapsed >= round.timerDuration + ROUND_GRACE_MS;
+        if(!(allAnswered || timedOut)) return;
+
+        // rank by reaction time; unanswered sorts last
+        const n = players.length;
+        const ranked = players.slice().sort((a,b) => {
+          const ea = (a.answeredRound >= round.roundNumber) ? (a.elapsedMs||0) : Infinity;
+          const eb = (b.answeredRound >= round.roundNumber) ? (b.elapsedMs||0) : Infinity;
+          return ea - eb;
+        });
+
+        let winner = null, topScore = 0;
+        for(let i=0;i<ranked.length;i++){
+          const p = ranked[i];
+          const answered = (p.answeredRound || -1) >= round.roundNumber;
+          const gained = (answered && p.correct) ? (n - i) : 0;
+          const newScore = (p.score || 0) + gained;
+          if(newScore > topScore) topScore = newScore;
+          await setPlayerDocById(p.id, {
+            name:p.name, score:newScore, answeredRound:p.answeredRound,
+            correct:p.correct, elapsedMs:p.elapsedMs, updatedAt:Date.now()
+          });
+          if(meta.targetScore && newScore >= meta.targetScore && !winner){
+            winner = { id:p.id, name:p.name };
+          }
+        }
+
+        if(winner){
+          await setMeta({ status:'finished', winnerId:winner.id, winnerName:winner.name });
+          stopHostLoop();
+          return;
+        }
+
+        const nextRoundNumber = round.roundNumber + 1;
+        const nextStage = stageForProgress(topScore, meta.targetScore);
+        // Record the round stage 3 began on, so the timer can reset there
+        // and then decay at the slower stage-3 rate from that point.
+        let stage3StartRound = meta.stage3StartRound || null;
+        if(nextStage === 3 && !stage3StartRound){
+          stage3StartRound = nextRoundNumber;
+          await setMeta({ stage3StartRound });
+        }
+        const next = buildRoundData(nextRoundNumber, nextStage, stage3StartRound);
+        await setRoundDoc(next);
+        await setMeta({ roundNumber: next.roundNumber });
+      } finally { hostLoopBusy = false; }
+    }, 400);
+  }
+  function stopHostLoop(){
+    if(hostLoop) clearInterval(hostLoop);
+    hostLoop = null;
+    hostLoopBusy = false;
+  }
+
+  async function showLobbyFinished(meta){
+    inGame = false;
+    clearTimeout(timerTimeout);
+    clearTimeout(revealTimeout);
+    transitionOutOfPlay();
+    if('speechSynthesis' in window){ try{ speechSynthesis.cancel(); }catch(e){} }
+    if(score > best){ best = score; bestEl.textContent = best; await saveBest(); }
+
+    const iWon = meta.winnerId === playerId;
+    $('overEyebrow').textContent = 'Match complete';
+    $('overHeadline').classList.add('result-letter');
+    $('overHeadline').textContent = iWon ? 'W' : 'L';
+    $('finalScore').textContent = score;
+    $('finalStage').textContent = lastRoundDoc ? lastRoundDoc.stage : 1;
+    $('finalBestStat').classList.add('hidden');
+    $('returnBtn').classList.add('hidden');
+
+    if(isHost){
+      $('restartBtn').classList.remove('hidden');
+      $('overWaitNote').classList.add('hidden');
+    } else {
+      $('restartBtn').classList.add('hidden');
+      $('overWaitNote').classList.remove('hidden');
+    }
+    $('overLeaveBtn').classList.remove('hidden');
+    const players = await fetchLobbyPlayers();
+    $('overRoster').classList.remove('hidden');
+    renderRoster($('overRoster'), players);
+    showCard('over');
+  }
+
+  /* ================= lobby screens ================= */
+  async function enterLobbyScreen(){
+    $('lobbyCodeDisplay').textContent = lobbyCode;
+    const link = buildShareLink(lobbyCode);
+    $('lobbyLink').value = link ? link : `Code: ${lobbyCode} (share this code)`;
+    const meta = await getMeta();
+    $('targetScoreInput').value = (meta && meta.customTargetScore) ? meta.customTargetScore : '';
+    if(isHost){
+      $('lobbyPlayBtn').classList.remove('hidden');
+      $('lobbyWaitNote').classList.add('hidden');
+      $('targetScoreInput').disabled = false;
+    } else {
+      $('lobbyPlayBtn').classList.add('hidden');
+      $('lobbyWaitNote').classList.remove('hidden');
+      $('targetScoreInput').disabled = true;
+    }
+    showCard('lobby');
+    renderRoster($('lobbyRoster'), await fetchLobbyPlayers());
+    startLeaderboardPolling();
+  }
+  function buildShareLink(code){
+    if(location.protocol.indexOf('http') !== 0) return null;
+    const url = new URL(location.href);
+    url.searchParams.set('room', code);
+    return url.toString();
+  }
+  function leaveLobbyState(){
+    stopLeaderboardPolling(); stopRoundPolling(); stopHostLoop();
+    clearTimeout(revealTimeout); clearTimeout(timerTimeout); clearCountdown();
+    lobbyCode = null; playerName = null; isHost = false; lastRoundDoc = null; inGame = false;
+    goalMetric.classList.add('hidden');
+    bestMetric.classList.remove('hidden');
+    livesEl.classList.remove('hidden');
+  }
+
+  /* =========================================================
+     STAGE 4 — the boss (solo only). Runs in its own fixed layer
+     (#boss) so none of the stage 1–3 chrome or layout rules apply.
+     ========================================================= */
+  const BOSS_START_TIME = 4000, BOSS_STEP = 200, BOSS_MIN_TIME = 1200;
+  const BOSS_MAX_HP = 100, BOSS_MAX_HIT = 20;
+  const BOSS_FLASH_MS = Math.round(620 * 0.8);        // stage 3 cadence, 20% quicker
+  const BOSS_REST_MS = 2000, BOSS_FADE_AT = 750, BOSS_VOICE_GAP = 800;
+  const BOSS_LAYOUTS = ['orbit', 'pulse', 'fall', 'drift', 'dvd'];
+  const BOSS_BG = COLORS.map(c => c.tint).concat(['#000000']);
+  const BOSS_FILL = BOSS_BG.concat(['#ffffff']);
+  const SERIF = "Georgia, 'Iowan Old Style', 'Palatino Linotype', Palatino, serif";
+  const MONO = "'IBM Plex Mono', monospace";
+  const WRITE_STAGGER = 68;
+  const GLIDE = 'transform .34s cubic-bezier(.2,.85,.25,1), opacity .6s ease, scale .6s cubic-bezier(.2,.8,.3,1), box-shadow .25s ease';
+  const SVGNS = 'http://www.w3.org/2000/svg';
+  const rand = (a, b) => a + Math.random() * (b - a);
+
+  const bossEl = $('boss'), bossTint = $('bossTint'), bossMsg = $('bossMsg');
+  const bossLogo = $('bossLogo'), bossLogoBob = $('bossLogoBob'), bossLogoTxt = $('bossLogoTxt');
+  const bossHp = $('bossHp'), bossHpFill = $('bossHpFill');
+  const bossTimer = $('bossTimer'), bossTimerFill = $('bossTimerFill');
+  const bossBegin = $('bossBegin'), bossArena = $('bossArena'), bossLives = $('bossLives');
+  const bossW = $('bossW'), bossHint = $('bossHint');
+
+  const boss = {
+    hp:BOSS_MAX_HP, timer:BOSS_START_TIME, round:0, active:false, over:false, busy:false,
+    lastLayout:null, data:null, word:null, btns:[], sim:null, raf:0, timers:[], engine:null,
+    tStart:0, tTotal:0, timerRaf:0, voiceToken:0, utter:null, flash:null, lastTint:null,
+    canReturn:false, stopChaos:null
+  };
+
+  /* ---------- colour helpers ---------- */
+  function luminance(hex){
+    const n = parseInt(hex.slice(1), 16);
+    const ch = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => {
+      v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4);
+    });
+    return .2126 * ch[0] + .7152 * ch[1] + .0722 * ch[2];
+  }
+  function contrast(a, b){
+    const la = luminance(a), lb = luminance(b);
+    return (Math.max(la, lb) + .05) / (Math.min(la, lb) + .05);
+  }
+
+  /* ---------- voice: prefer a natural-sounding female English voice ---------- */
+  let bossVoice = null, voiceHooked = false;
+  function pickBossVoice(){
+    if(!('speechSynthesis' in window)) return;
+    const FEM = /(aria|jenny|ava|emma|michelle|sonia|libby|natasha|clara|samantha|allison|susan|victoria|karen|moira|tessa|serena|fiona|zira|hazel|joanna|salli|kendra|kimberly|ivy|nicky|female|google us english|catherine|nora|ellie|amy|olivia|elsa|jane)/i;
+    const MALE = /(\bmale\b|david|mark|guy|daniel|alex|fred|tom|ryan|christopher|eric|george|arthur|oliver|aaron|gordon|rishi|thomas|james|brian|matthew|justin|joey|liam|william|andrew|roger|steffan)/i;
+    const choose = () => {
+      let best = null, bestScore = -1e9;
+      speechSynthesis.getVoices().forEach(v => {
+        let s = /^en/i.test(v.lang) ? 20 : -60;
+        if(/natural|neural/i.test(v.name)) s += 14;
+        if(/online|premium|enhanced/i.test(v.name)) s += 6;
+        if(FEM.test(v.name)) s += 10;
+        if(MALE.test(v.name)) s -= 40;
+        if(s > bestScore){ bestScore = s; best = v; }
+      });
+      if(best) bossVoice = best;
+    };
+    choose();
+    if(!voiceHooked && speechSynthesis.addEventListener){
+      voiceHooked = true;
+      speechSynthesis.addEventListener('voiceschanged', choose);
+    }
+  }
+  // Never cancels: a phrase always plays to completion, even past round end.
+  function bossSay(name, done){
+    let finished = false;
+    const fin = () => { if(finished) return; finished = true; done(); };
+    if(!('speechSynthesis' in window)){ setTimeout(fin, 700); return; }
+    try{
+      const u = new SpeechSynthesisUtterance(name.charAt(0) + name.slice(1).toLowerCase());
+      if(bossVoice){ u.voice = bossVoice; u.lang = bossVoice.lang; }
+      u.rate = .95; u.pitch = 1.04; u.volume = .9;
+      u.onend = fin; u.onerror = fin;
+      boss.utter = u;                       // keeps the utterance from being GC'd mid-speech
+      if(speechSynthesis.paused) speechSynthesis.resume();
+      speechSynthesis.speak(u);
+      setTimeout(fin, 2600);                // safety net if onend never fires
+    }catch(e){ setTimeout(fin, 700); }
+  }
+  function bossVoiceLoop(inkName){
+    const token = ++boss.voiceToken;
+    let last = null;
+    const next = () => {
+      if(token !== boss.voiceToken || !boss.active) return;
+      const c = pick(COLORS.filter(x => x.name !== inkName && x.name !== last));
+      last = c.name;
+      bossSay(c.name, () => setTimeout(next, BOSS_VOICE_GAP));
+    };
+    next();
+  }
+
+  /* ---------- font pool for the death throes ---------- */
+  const CHAOS_GOOGLE = ['Abril Fatface','Alfa Slab One','Allerta Stencil','Amatic SC','Anton','Archivo Black','Arvo','Audiowide','Bangers','Bebas Neue','Bitter','Black Ops One','Bodoni Moda','Bungee','Bungee Shade','Bungee Inline','Bungee Outline','Bungee Hairline','Cabin Sketch','Cinzel','Cinzel Decorative','Comfortaa','Cormorant Garamond','Creepster','Crimson Text','Dancing Script','DM Serif Display','Eater','Fascinate','Faster One','Fredericka the Great','Fredoka','Fugaz One','Gloria Hallelujah','Graduate','Gravitas One','Great Vibes','Holtwood One SC','Iceland','Inter','Italiana','Josefin Sans','Kaushan Script','Lobster','Londrina Solid','Londrina Shadow','Londrina Sketch','Luckiest Guy','Monoton','Montserrat','Nosifer','Orbitron','Oswald','Pacifico','Permanent Marker','Playfair Display','Poiret One','Press Start 2P','Righteous','Rubik Mono One','Rye','Sacramento','Shrikhand','Silkscreen','Special Elite','Staatliches','Syne','Ultra','UnifrakturMaguntia','Vast Shadow','VT323','Wallpoet','Yeseva One','Zilla Slab','Abel','Alegreya','Alice','Almendra','Amiri','Arimo','Asap','Barlow','Barlow Condensed','Baskervville','Bellefair','Bevan','Bowlby One','Bree Serif','Butcherman','Cabin','Caveat','Chakra Petch','Changa One','Chivo','Codystar','Concert One','Cookie','Courgette','Crete Round','Cutive Mono','Days One','Didact Gothic','Domine','Dosis','EB Garamond','Economica','Electrolize','Emblema One','Encode Sans','Exo 2','Federant','Fira Sans','Fjalla One','Frijole','Gochi Hand','Gruppo','Handlee','Homemade Apple','IBM Plex Serif','Inconsolata','Josefin Slab','Jura','Kanit','Karla','Kranky','Lato','Libre Baskerville','Limelight','Lora','Marck Script','Merriweather','Metal Mania','Michroma','Monofett','Mountains of Christmas','Mr Dafoe','Neuton','New Rocker','Nixie One','Noto Serif','Nunito','Old Standard TT','Oleo Script','Open Sans','Overpass','Oxanium','Parisienne','Passion One','Pathway Gothic One','Patua One','Philosopher','Pirata One','Play','Playball','Podkova','Poppins','Prata','Quicksand','Racing Sans One','Raleway','Rammetto One','Roboto','Roboto Mono','Roboto Slab','Rock Salt','Rozha One','Rubik','Russo One','Sancreek','Satisfy','Sedgwick Ave Display','Share Tech Mono','Sigmar One','Six Caps','Slackey','Smokum','Sniglet','Source Code Pro','Space Grotesk','Space Mono','Spectral','Squada One','Stardos Stencil','Teko','Titan One','Trade Winds','Train One','Tulpen One','Unica One','Vampiro One','Varela Round','Vollkorn','Wendy One','Work Sans','Yellowtail','Zen Dots','Aldrich','Allan','Bahiana','Bigshot One','Black Han Sans','Caesar Dressing','Carter One','Chango','Cherry Cream Soda','Coda','Diplomata','Diplomata SC','Dr Sugiyama','Elsie','Ewert','Flavors','Fontdiner Swanky','Geo','Germania One','Glass Antiqua','Gorditas','Hanalei','Irish Grover','Jolly Lodger','Joti One','Kenia','Knewave','Lacquer','Lemon','Life Savers','Lilita One','Macondo','Megrim','Metamorphous','Miltonian Tattoo','Nova Mono','Nova Square','Offside','Plaster','Poller One','Quantico','Ribeye Marrow','Ruslan Display','Sail','Seaweed Script','Snowburst One','Sonsie One','Spicy Rice','Stint Ultra Expanded','Supermercado One','Unlock','Vibur','Warnes','Zeyada'];
+  const CHAOS_SYSTEM = ["Georgia, serif","'Times New Roman', serif","Arial, sans-serif","'Arial Black', sans-serif","'Courier New', monospace","Impact, sans-serif","'Trebuchet MS', sans-serif","Verdana, sans-serif","'Palatino Linotype', Palatino, serif","Garamond, serif","'Comic Sans MS', cursive","'Brush Script MT', cursive","Copperplate, fantasy","Papyrus, fantasy","'Lucida Console', monospace","'Gill Sans', sans-serif","Didot, serif","Futura, sans-serif","Optima, sans-serif","Rockwell, serif","Baskerville, serif","'Segoe UI', sans-serif","Tahoma, sans-serif","'Franklin Gothic Medium', sans-serif","monospace","cursive","fantasy","system-ui"];
+  const CHAOS_FONTS = CHAOS_GOOGLE.map(n => ({ css:`"${n}", serif`, w:'400' }))
+    .concat(CHAOS_SYSTEM.map(n => ({ css:n, w:'700' })));
+  let chaosInjected = false;
+  // Only the five glyphs of STROOP are requested (text=), so each font is tiny.
+  function injectChaosFonts(){
+    if(chaosInjected) return;
+    chaosInjected = true;
+    for(let i = 0; i < CHAOS_GOOGLE.length; i += 6){
+      const link = document.createElement('link');
+      link.rel = 'stylesheet';
+      link.href = 'https://fonts.googleapis.com/css2?' +
+        CHAOS_GOOGLE.slice(i, i + 6).map(f => 'family=' + f.replace(/ /g, '+')).join('&') +
+        '&text=STROOP&display=block';
+      document.head.appendChild(link);
+    }
+    const warm = document.createElement('div');
+    warm.setAttribute('aria-hidden', 'true');
+    warm.style.cssText = 'position:absolute;left:-9999px;top:0;visibility:hidden;pointer-events:none;';
+    CHAOS_GOOGLE.forEach(f => {
+      const s = document.createElement('span');
+      s.style.fontFamily = `"${f}"`; s.textContent = 'STROOP';
+      warm.appendChild(s);
+    });
+    document.body.appendChild(warm);
+  }
+
+  /* ---------- intro writing ---------- */
+  function buildWriteSvg(text){
+    const size = Math.round(Math.min(52, Math.max(30, innerWidth * .032)));
+    const svg = document.createElementNS(SVGNS, 'svg');
+    svg.setAttribute('class', 'write-svg');
+    bossMsg.appendChild(svg);
+    const setFont = t => { t.setAttribute('font-size', size); t.setAttribute('font-family', 'Georgia, serif'); t.setAttribute('font-style', 'italic'); };
+    // Lay the whole line out once to get kerned x positions, then draw each letter on its own.
+    const probe = document.createElementNS(SVGNS, 'text');
+    setFont(probe); probe.setAttribute('x', 0); probe.setAttribute('y', size);
+    probe.textContent = text;
+    svg.appendChild(probe);
+    const total = probe.getComputedTextLength();
+    const xs = [];
+    for(let i = 0; i < text.length; i++){
+      try{ xs.push(probe.getStartPositionOfChar(i).x); }catch(e){ xs.push(total * i / text.length); }
+    }
+    probe.remove();
+    const pad = size * .4, h = size * 1.4;
+    svg.setAttribute('viewBox', `${-pad} 0 ${total + pad * 2} ${h}`);
+    svg.setAttribute('width', total + pad * 2);
+    svg.setAttribute('height', h);
+    for(let i = 0; i < text.length; i++){
+      if(text[i] === ' ') continue;
+      const t = document.createElementNS(SVGNS, 'text');
+      setFont(t); t.setAttribute('x', xs[i]); t.setAttribute('y', size);
+      t.setAttribute('class', 'wl');
+      t.style.setProperty('--d', (i * WRITE_STAGGER) + 'ms');
+      t.textContent = text[i];
+      svg.appendChild(t);
+    }
+    return svg;
+  }
+  async function bossWrite(text, holdMs, fadeMs){
+    const svg = buildWriteSvg(text);
+    await wait(WRITE_STAGGER * (text.length - 1) + 1350);   // last letter fully inked
+    await wait(holdMs);
+    svg.style.transitionDuration = fadeMs + 'ms';
+    svg.classList.add('gone');
+    await wait(fadeMs + 60);
+    svg.remove();
+  }
+
+  /* ---------- layer lifecycle ---------- */
+  function bossLoop(){
+    cancelAnimationFrame(boss.raf);
+    let last = performance.now();
+    const frame = now => {
+      const dt = Math.min(.05, Math.max(0, (now - last) / 1000));
+      last = now;
+      if(boss.sim) boss.sim(dt);
+      boss.raf = requestAnimationFrame(frame);
+    };
+    boss.raf = requestAnimationFrame(frame);
+  }
+  function bossStopFlash(){ if(boss.flash) clearInterval(boss.flash); boss.flash = null; }
+  function bossClearArena(){
+    boss.timers.forEach(t => clearTimeout(t));
+    boss.timers = [];
+    boss.sim = null;
+    if(boss.engine && window.Matter){
+      try{ Matter.Composite.clear(boss.engine.world, false); Matter.Engine.clear(boss.engine); }catch(e){}
+    }
+    boss.engine = null;
+    bossArena.innerHTML = '';
+    boss.btns = []; boss.word = null;
+  }
+  function bossReset(){
+    bossEl.classList.add('hidden');
+    bossEl.classList.remove('show', 'can-return');
+    bossClearArena(); bossStopFlash();
+    cancelAnimationFrame(boss.raf); cancelAnimationFrame(boss.timerRaf);
+    if(boss.stopChaos){ boss.stopChaos(); boss.stopChaos = null; }
+    boss.active = false; boss.over = false; boss.canReturn = false; boss.voiceToken++;
+    bossEl.style.backgroundColor = '';
+    bossTint.classList.remove('on'); bossTint.style.backgroundColor = '';
+    bossMsg.innerHTML = '';
+    bossLogo.className = ''; bossLogo.removeAttribute('style');
+    bossLogoBob.getAnimations().forEach(a => a.cancel());
+    bossLogoBob.className = 'bl-bob';
+    bossLogoTxt.className = 'bl-txt'; bossLogoTxt.removeAttribute('style');
+    bossHp.removeAttribute('style');
+    bossHpFill.className = ''; bossHpFill.removeAttribute('style');
+    bossTimer.classList.remove('on'); bossTimerFill.removeAttribute('style');
+    bossLives.classList.remove('on');
+    Array.from(bossLives.children).forEach(s => { s.className = ''; });
+    bossBegin.classList.remove('flash');
+    bossW.classList.remove('in'); bossHint.classList.remove('in');
+  }
+  async function bossFadeToBlack(){
+    bossReset();
+    boss.hp = BOSS_MAX_HP; boss.timer = BOSS_START_TIME; boss.round = 0; boss.lastLayout = null;
+    lives = LIVES_START;
+    bossEl.classList.remove('hidden');
+    void bossEl.offsetWidth;
+    bossEl.classList.add('show');
+    bossLoop();
+    await wait(1750);
+  }
+  function bossRenderLives(){
+    Array.from(bossLives.children).forEach((s, i) => s.classList.toggle('lost', i >= lives));
+  }
+  function settleBob(){
+    const cur = getComputedStyle(bossLogoBob).transform;
+    bossLogoBob.classList.remove('bob');
+    if(cur && cur !== 'none'){
+      bossLogoBob.animate([{ transform:cur }, { transform:'none' }], { duration:700, easing:'ease-out' });
+    }
+  }
+
+  async function runBossIntro(){
+    injectChaosFonts();
+    pickBossVoice();
+    await wait(1000);
+    await bossWrite('You\u2019re quite the test subject,', 1500, 1100);
+    await wait(550);
+    await bossWrite('can I study you further?', 1900, 1300);
+    await wait(1000);
+    bossLogo.classList.add('in');                 // floats down from above
+    await wait(2000);
+    bossHpFill.style.transform = 'scaleX(1)';     // bar extends out from centre
+    bossRenderLives();
+    bossLives.classList.add('on');
+    await wait(1700);
+    bossHpFill.classList.add('fight');
+    await wait(900);
+    bossBegin.classList.add('flash');
+    await wait(800);
+    bossBegin.classList.remove('flash');
+    bossLogoBob.classList.add('bob');
+    await wait(250);
+    boss.busy = false;
+    bossNewRound();
+  }
+
+  /* ---------- round construction ---------- */
+  function buildBossRound(){
+    const meaning = pick(COLORS);
+    const ink = pick(COLORS.filter(c => c.name !== meaning.name));
+    // backdrop pool never hides the target word outright
+    let bg = BOSS_BG.filter(h => h !== ink.tint && contrast(h, ink.hex) >= 1.35);
+    if(bg.length < 3) bg = BOSS_BG.filter(h => h !== ink.tint);
+    return { wordName:meaning.name, ink, options:shuffle(COLORS).map(c => c.name), bg };
+  }
+  function bossType(el){
+    const serif = Math.random() < .45, bold = Math.random() < .45;
+    const italic = Math.random() < .35, spaced = Math.random() < .4;
+    el.style.fontFamily = serif ? SERIF : MONO;
+    el.style.fontWeight = bold ? '700' : (serif ? '400' : '500');
+    el.style.fontStyle = italic ? 'italic' : 'normal';
+    el.style.letterSpacing = spaced ? '.2em' : '.04em';
+    el.style.textIndent = spaced ? '.2em' : '.04em';   // re-centres the trailing letter-space
+  }
+  function bossProtectedBottom(){ return bossHp.getBoundingClientRect().bottom + 30; }
+  function bossPlace(b){
+    b.el.style.transform = `translate3d(${(b.x - b.w / 2).toFixed(1)}px, ${(b.y - b.h / 2).toFixed(1)}px, 0) rotate(${(b.a || 0).toFixed(4)}rad)`;
+  }
+  function bossPlaceWord(w, x, y){
+    w.x = x; w.y = y;
+    w.el.style.left = x + 'px'; w.el.style.top = y + 'px';
+  }
+  function bossMakeWord(d, vertical){
+    const el = document.createElement('div');
+    el.className = 'bword' + (vertical ? ' vertical' : '');
+    el.style.color = d.ink.hex;
+    const inner = document.createElement('span');
+    inner.className = 'bword-in';
+    inner.textContent = d.wordName;
+    bossType(inner);
+    el.appendChild(inner);
+    bossArena.appendChild(el);
+    const w = { el, inner, x:0, y:0, w:el.offsetWidth, h:el.offsetHeight };
+    if(vertical){
+      const avail = innerHeight - bossProtectedBottom() - 36;
+      if(w.h > avail){
+        const fs = parseFloat(getComputedStyle(el).fontSize);
+        el.style.fontSize = (fs * avail / w.h) + 'px';
+        w.w = el.offsetWidth; w.h = el.offsetHeight;
+      }
+    }
+    return w;
+  }
+  function bossMakeButton(name, circle){
+    const el = document.createElement('button');
+    el.className = 'bopt' + (circle ? ' circle' : '');
+    el.textContent = name;
+    const text = pick(COLORS.filter(c => c.name !== name)).hex;
+    let fill = pick(BOSS_FILL);
+    for(let k = 0; k < 16 && contrast(text, fill) < 1.7; k++) fill = pick(BOSS_FILL);
+    el.style.color = text;
+    el.style.background = fill;
+    el.style.borderColor = Math.random() < .28 ? 'transparent' : pick(COLORS).hex;
+    bossType(el);
+    const b = { el, name, x:0, y:0, w:0, h:0, a:0 };
+    el.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      if(!boss.active) return;
+      playClickSound();
+      bossAnswer(b);
+    });
+    el.addEventListener('click', e => {            // keyboard activation only
+      if(e.detail === 0 && boss.active){ playClickSound(); bossAnswer(b); }
+    });
+    bossArena.appendChild(el);
+    return b;
+  }
+  // Random non-overlapping centres across the viewport (buttons may cover the logo/word).
+  function bossScatter(btns, avoid, gap){
+    const W = innerWidth, H = innerHeight, m = 16, placed = [];
+    btns.forEach(b => {
+      let x, y, ok, k = 0;
+      do{
+        x = rand(b.w / 2 + m, W - b.w / 2 - m);
+        y = rand(b.h / 2 + m, H - b.h / 2 - m);
+        ok = !placed.some(p => Math.abs(p.x - x) < (p.w + b.w) / 2 + gap && Math.abs(p.y - y) < (p.h + b.h) / 2 + gap)
+          && (!avoid || !avoid(x, y, b));
+      } while(!ok && ++k < 150);
+      b.x = x; b.y = y;
+      placed.push(b);
+    });
+  }
+
+  /* ---------- the six challenge layouts ---------- */
+  const BOSS_LAYOUT_FN = {
+    // First challenge: the stage 3 arrangement, scaled up and spread out 50%.
+    grid(word, btns){
+      const W = innerWidth, H = innerHeight, pb = bossProtectedBottom();
+      const bw = Math.max(...btns.map(b => b.w)), bh = Math.max(...btns.map(b => b.h));
+      btns.forEach(b => { b.el.style.width = bw + 'px'; b.w = bw; b.h = bh; });
+      const cg = 72, rg = 30, gapWord = 64;
+      const blockH = word.h + gapWord + bh * 3 + rg * 2;
+      const top = pb + Math.max(0, (H - pb - blockH) / 2);
+      bossPlaceWord(word, W / 2, top + word.h / 2);
+      const x0 = W / 2 - (bw + cg), y0 = top + word.h + gapWord + bh / 2;
+      btns.forEach((b, i) => { b.x = x0 + (i % 3) * (bw + cg); b.y = y0 + Math.floor(i / 3) * (bh + rg); bossPlace(b); });
+    },
+
+    // 1) Orbit — direction flips every 0.3–1.5s, eased so reversals stay fluid.
+    orbit(word, btns){
+      const W = innerWidth, H = innerHeight, pb = bossProtectedBottom();
+      const cx = W / 2, cy = Math.max(H / 2 + 12, pb + word.h / 2 + 12);
+      bossPlaceWord(word, cx, cy);
+      const n = btns.length;
+      const bw = Math.max(...btns.map(b => b.w)), bh = Math.max(...btns.map(b => b.h));
+      const r = Math.max((bw + 22) / (2 * Math.sin(Math.PI / n)), word.w / 2 + bw / 2 + 26);
+      const ry = Math.max(word.h / 2 + bh / 2 + 20, Math.min(r, cy - bh / 2 - 10, H - cy - bh / 2 - 12));
+      const rx = Math.min(Math.max(r, ry), W / 2 - bw / 2 - 14);
+      const SPEED = .85;
+      let theta = rand(0, Math.PI * 2), dir = Math.random() < .5 ? 1 : -1, omega = dir * SPEED;
+      const flip = () => { dir = -dir; boss.timers.push(setTimeout(flip, rand(300, 1500))); };
+      boss.timers.push(setTimeout(flip, rand(300, 1500)));
+      boss.sim = dt => {
+        omega += (dir * SPEED - omega) * Math.min(1, dt * 11);
+        theta += omega * dt;
+        btns.forEach((b, i) => {
+          const t = theta + i * Math.PI * 2 / n;
+          b.x = cx + rx * Math.cos(t); b.y = cy + ry * Math.sin(t);
+          bossPlace(b);
+        });
+      };
+      boss.sim(0);
+    },
+
+    // 2) Synchronised pulses — every button jumps at once to fresh non-overlapping spots.
+    pulse(word, btns){
+      const W = innerWidth, H = innerHeight, pb = bossProtectedBottom();
+      const side = Math.random() < .5 ? -1 : 1;
+      bossPlaceWord(word, W / 2 + side * Math.min(W * .12, 260), Math.max((pb + H) / 2, pb + word.h / 2 + 12));
+      const jump = () => { bossScatter(btns, null, 18); btns.forEach(bossPlace); };
+      jump();
+      void bossArena.offsetWidth;                  // commit start spots before gliding is enabled
+      btns.forEach(b => { b.el.style.transition = GLIDE; });
+      const loop = () => {
+        if(!boss.active) return;
+        jump();
+        boss.timers.push(setTimeout(loop, rand(450, 1100)));
+      };
+      boss.timers.push(setTimeout(loop, rand(500, 1100)));
+    },
+
+    // 3) Falling — real rigid bodies (Matter.js): gravity, tumbling, stacking on the word.
+    fall(word, btns){
+      const W = innerWidth, H = innerHeight;
+      const { Engine, Bodies, Composite, Body } = window.Matter;
+      bossPlaceWord(word, W / 2, H - word.h / 2 - Math.max(34, H * .05));
+      const engine = Engine.create();
+      engine.gravity.y = 1.15;
+      Composite.add(engine.world, [
+        Bodies.rectangle(W / 2, H + 60, W + 800, 120, { isStatic:true, friction:.7 }),
+        Bodies.rectangle(-60, H / 2 - 1200, 120, H + 3000, { isStatic:true }),
+        Bodies.rectangle(W + 60, H / 2 - 1200, 120, H + 3000, { isStatic:true }),
+        Bodies.rectangle(word.x, word.y, word.w, word.h * .78, { isStatic:true, friction:.6, chamfer:{ radius:8 } })
+      ]);
+      const placed = [];
+      btns.forEach(b => {
+        const R = Math.hypot(b.w, b.h) / 2;
+        let x, y, k = 0;
+        do{ x = rand(b.w / 2 + 16, W - b.w / 2 - 16); y = -rand(R * .6, R * .6 + H * .42); }
+        while(++k < 150 && placed.some(p => Math.hypot(p.x - x, p.y - y) < p.R + R + 6));
+        b.x = x; b.y = y; b.R = R;
+        placed.push(b);
+        b.body = Bodies.rectangle(x, y, b.w, b.h, {
+          chamfer:{ radius:17 }, restitution:.3, friction:.3, frictionAir:.006, density:.0016,
+          angle:rand(-.45, .45)
+        });
+        Body.setVelocity(b.body, { x:rand(-1.4, 1.4), y:rand(1, 3.5) });
+        Body.setAngularVelocity(b.body, rand(-.035, .035));
+        Composite.add(engine.world, b.body);
+      });
+      boss.engine = engine;
+      const STEP = 1000 / 60;
+      let acc = 0;
+      boss.sim = dt => {
+        acc += dt * 1000;
+        let n = 0;
+        while(acc >= STEP && n++ < 4){ Engine.update(engine, STEP); acc -= STEP; }
+        btns.forEach(b => { b.x = b.body.position.x; b.y = b.body.position.y; b.a = b.body.angle; bossPlace(b); });
+      };
+      boss.sim(0);
+    },
+
+    // 4) Drift — each button steers along its own squiggle; they never overlap each other.
+    drift(word, btns){
+      const W = innerWidth, H = innerHeight, pb = bossProtectedBottom();
+      bossPlaceWord(word, W / 2, Math.max(H / 2 + 12, pb + word.h / 2 + 12));
+      bossScatter(btns, null, 24);
+      btns.forEach(b => {
+        b.th0 = rand(0, Math.PI * 2); b.sp = rand(40, 66);
+        b.A1 = rand(.55, 1.15); b.f1 = rand(.55, 1.25); b.p1 = rand(0, 6.28);
+        b.A2 = rand(.15, .45);  b.f2 = rand(1.4, 2.6);  b.p2 = rand(0, 6.28);
+        bossPlace(b);
+      });
+      let t = 0;
+      const head = b => b.th0 + b.A1 * Math.sin(b.f1 * t + b.p1) + b.A2 * Math.sin(b.f2 * t + b.p2);
+      const flipX = b => { b.th0 += Math.PI - 2 * head(b); };
+      const flipY = b => { b.th0 += -2 * head(b); };
+      boss.sim = dt => {
+        t += dt;
+        const W = innerWidth, H = innerHeight, m = 10;
+        btns.forEach(b => {
+          const h = head(b);
+          b.x += Math.cos(h) * b.sp * dt; b.y += Math.sin(h) * b.sp * dt;
+          if(b.x - b.w / 2 < m){ b.x = m + b.w / 2; if(Math.cos(h) < 0) flipX(b); }
+          else if(b.x + b.w / 2 > W - m){ b.x = W - m - b.w / 2; if(Math.cos(h) > 0) flipX(b); }
+          if(b.y - b.h / 2 < m){ b.y = m + b.h / 2; if(Math.sin(h) < 0) flipY(b); }
+          else if(b.y + b.h / 2 > H - m){ b.y = H - m - b.h / 2; if(Math.sin(h) > 0) flipY(b); }
+        });
+        for(let i = 0; i < btns.length; i++) for(let j = i + 1; j < btns.length; j++){
+          const a = btns[i], c = btns[j];
+          const ox = (a.w + c.w) / 2 + 10 - Math.abs(a.x - c.x);
+          const oy = (a.h + c.h) / 2 + 10 - Math.abs(a.y - c.y);
+          if(ox <= 0 || oy <= 0) continue;
+          if(ox < oy){
+            const s = Math.sign(a.x - c.x) || 1;
+            a.x += s * ox / 2; c.x -= s * ox / 2;
+            if(Math.sign(Math.cos(head(a))) === -s) flipX(a);
+            if(Math.sign(Math.cos(head(c))) === s) flipX(c);
+          } else {
+            const s = Math.sign(a.y - c.y) || 1;
+            a.y += s * oy / 2; c.y -= s * oy / 2;
+            if(Math.sign(Math.sin(head(a))) === -s) flipY(a);
+            if(Math.sign(Math.sin(head(c))) === s) flipY(c);
+          }
+        }
+        btns.forEach(bossPlace);
+      };
+    },
+
+    // 5) DVD — circles on fixed 45° diagonals, bouncing off walls, each other and the word.
+    dvd(word, btns){
+      const W = innerWidth, H = innerHeight, pb = bossProtectedBottom();
+      const left = Math.random() < .5;
+      const x = left ? Math.max(word.w / 2 + 48, W * .09) : Math.min(W - word.w / 2 - 48, W * .91);
+      bossPlaceWord(word, x, pb + (H - pb) / 2);
+      const wr = { l:word.x - word.w / 2, r:word.x + word.w / 2, t:word.y - word.h / 2, b:word.y + word.h / 2 };
+      const rectDist = (px, py) => Math.hypot(px - Math.max(wr.l, Math.min(px, wr.r)), py - Math.max(wr.t, Math.min(py, wr.b)));
+      bossScatter(btns, (px, py, b) => rectDist(px, py) < b.r + 14, 12);
+      const V = 155;
+      btns.forEach(b => {
+        b.vx = (Math.random() < .5 ? -1 : 1) * V;
+        b.vy = (Math.random() < .5 ? -1 : 1) * V;
+        bossPlace(b);
+      });
+      boss.sim = dt => {
+        const W = innerWidth, H = innerHeight;
+        btns.forEach(b => {
+          b.x += b.vx * dt; b.y += b.vy * dt;
+          if(b.x - b.r < 0){ b.x = b.r; b.vx = Math.abs(b.vx); }
+          else if(b.x + b.r > W){ b.x = W - b.r; b.vx = -Math.abs(b.vx); }
+          if(b.y - b.r < 0){ b.y = b.r; b.vy = Math.abs(b.vy); }
+          else if(b.y + b.r > H){ b.y = H - b.r; b.vy = -Math.abs(b.vy); }
+          const px = Math.max(wr.l, Math.min(b.x, wr.r)), py = Math.max(wr.t, Math.min(b.y, wr.b));
+          let dx = b.x - px, dy = b.y - py;
+          const dist = Math.hypot(dx, dy);
+          if(dist < b.r){
+            if(dist < .001){
+              dx = (b.x - wr.l) < (wr.r - b.x) ? -1 : 1; dy = 0;
+              b.x = dx < 0 ? wr.l - b.r : wr.r + b.r;
+            } else {
+              b.x = px + dx / dist * b.r; b.y = py + dy / dist * b.r;
+            }
+            if(Math.abs(dx) >= Math.abs(dy)) b.vx = Math.sign(dx) * Math.abs(b.vx);
+            else b.vy = Math.sign(dy) * Math.abs(b.vy);
+          }
+        });
+        for(let i = 0; i < btns.length; i++) for(let j = i + 1; j < btns.length; j++){
+          const a = btns[i], c = btns[j];
+          const dx = a.x - c.x, dy = a.y - c.y, min = a.r + c.r;
+          const dist = Math.hypot(dx, dy) || .001;
+          if(dist >= min) continue;
+          const nx = dx / dist, ny = dy / dist, push = (min - dist) / 2;
+          a.x += nx * push; a.y += ny * push; c.x -= nx * push; c.y -= ny * push;
+          if(Math.abs(nx) >= Math.abs(ny)){ const s = Math.sign(nx) || 1; a.vx = s * Math.abs(a.vx); c.vx = -s * Math.abs(c.vx); }
+          else { const s = Math.sign(ny) || 1; a.vy = s * Math.abs(a.vy); c.vy = -s * Math.abs(c.vy); }
+        }
+        btns.forEach(bossPlace);
+      };
+    }
+  };
+
+  /* ---------- a round ---------- */
+  function bossStartFlash(pool){
+    bossStopFlash();
+    const next = () => {
+      const opts = pool.filter(h => h !== boss.lastTint);
+      boss.lastTint = pick(opts.length ? opts : pool);
+      bossTint.style.backgroundColor = boss.lastTint;
+    };
+    next();
+    bossTint.classList.add('on');
+    boss.flash = setInterval(next, BOSS_FLASH_MS);
+  }
+  function bossStartTimer(total){
+    boss.tTotal = total;
+    boss.tStart = performance.now();
+    bossTimerFill.style.transition = 'none';
+    bossTimer.classList.add('on');
+    cancelAnimationFrame(boss.timerRaf);
+    const tick = now => {
+      if(!boss.active) return;
+      const rem = Math.max(0, total - (now - boss.tStart));
+      bossTimerFill.style.transform = `scaleX(${rem / total})`;
+      if(rem <= 0){ bossAnswer(null); return; }
+      boss.timerRaf = requestAnimationFrame(tick);
+    };
+    boss.timerRaf = requestAnimationFrame(tick);
+  }
+
+  function bossNewRound(){
+    if(boss.over) return;
+    bossClearArena();
+    boss.round++;
+    const d = buildBossRound();
+    boss.data = d;
+    let layout = 'grid';
+    if(boss.round > 1){
+      const pool = BOSS_LAYOUTS.filter(l => l !== boss.lastLayout && (l !== 'fall' || window.Matter));
+      layout = pick(pool);
+    }
+    boss.lastLayout = layout;
+    const circle = layout === 'dvd';
+    const word = bossMakeWord(d, circle);
+    const btns = d.options.map(n => bossMakeButton(n, circle));
+    btns.forEach(b => {
+      if(circle){
+        const dia = Math.max(b.el.offsetWidth + 46, 138);
+        b.el.style.width = b.el.style.height = dia + 'px';
+        b.w = b.h = dia; b.r = dia / 2;
+      } else {
+        b.w = b.el.offsetWidth; b.h = b.el.offsetHeight;
+      }
+    });
+    boss.word = word; boss.btns = btns;
+    BOSS_LAYOUT_FN[layout](word, btns);
+    void bossArena.offsetWidth;                    // start positions land before anything fades in
+    word.el.classList.add('in');
+    btns.forEach((b, i) => {
+      if(layout === 'grid') boss.timers.push(setTimeout(() => b.el.classList.add('in'), i * 35));
+      else b.el.classList.add('in');
+    });
+    bossStartFlash(d.bg);                          // black -> colour happens with the challenge
+    boss.active = true;
+    bossVoiceLoop(d.ink.name);
+    bossStartTimer(boss.timer);
+  }
+
+  function bossAnswer(sel){
+    if(!boss.active) return;
+    boss.active = false;
+    boss.voiceToken++;                             // stop scheduling phrases (current one finishes)
+    cancelAnimationFrame(boss.timerRaf);
+    const d = boss.data;
+    const remaining = Math.max(0, boss.tTotal - (performance.now() - boss.tStart));
+    const correct = !!sel && sel.name === d.ink.name;
+
+    boss.btns.forEach(b => {
+      b.el.disabled = true;
+      b.el.style.pointerEvents = 'none';
+      if(b.name === d.ink.name) b.el.classList.add('hit-ok');
+      else if(b !== sel) b.el.classList.add('dim');
+    });
+    if(sel && !correct) sel.el.classList.add('hit-bad');
+    if(boss.word) boss.word.inner.classList.add(correct ? 'pulse-ok' : 'pulse-bad');
+
+    if(correct){
+      boss.hp = Math.max(0, boss.hp - (remaining / boss.tTotal) * BOSS_MAX_HIT);
+      bossHpFill.style.transform = `scaleX(${boss.hp / BOSS_MAX_HP})`;
+      bossLogoTxt.classList.remove('hit'); void bossLogoTxt.offsetWidth; bossLogoTxt.classList.add('hit');
+      boss.timer = Math.max(BOSS_MIN_TIME, boss.timer - BOSS_STEP);
+      soloCorrect++;
+      score += 100 + Math.floor(soloCorrect / 2) * 10;
+      scoreEl.textContent = score;
+    } else {
+      lives--;
+      bossRenderLives();
+      boss.timer = Math.min(BOSS_START_TIME, boss.timer + BOSS_STEP);
+    }
+
+    setTimeout(bossFadeRound, BOSS_FADE_AT);
+    if(boss.hp <= 0){ bossDeath(); return; }
+    if(lives <= 0){ bossDefeat(); return; }
+    setTimeout(bossNewRound, BOSS_REST_MS);
+  }
+  function bossFadeRound(){
+    if(boss.word) boss.word.el.classList.remove('in');
+    boss.btns.forEach(b => b.el.classList.add('out'));
+    bossStopFlash();
+    bossTint.classList.remove('on');               // back to black for the rest beat
+    if(!boss.over){
+      bossTimerFill.style.transition = 'transform 1s cubic-bezier(.4,0,.2,1)';
+      bossTimerFill.style.transform = 'scaleX(1)';
+    }
+  }
+
+  /* ---------- outcomes ---------- */
+  function startChaos(){
+    const txt = bossLogoTxt;
+    const baseW = txt.offsetWidth, t0 = performance.now();
+    let alive = true, tm = null;
+    const step = () => {
+      if(!alive) return;
+      const f = pick(CHAOS_FONTS);
+      txt.style.fontFamily = f.css;
+      txt.style.fontWeight = f.w;
+      const s = Math.max(.5, Math.min(1.9, baseW / (txt.offsetWidth || baseW)));   // hold the same visual width
+      const k = Math.min(1, (performance.now() - t0) / 6000);
+      const spike = Math.random() < .14;
+      const mag = (spike ? rand(9, 24) : rand(0, 7)) * (.55 + k * .9);
+      const rot = rand(-2.4, 2.4) * (spike ? 2 : 1);
+      txt.style.transform = `translate(${rand(-mag, mag).toFixed(1)}px, ${rand(-mag, mag).toFixed(1)}px) rotate(${rot.toFixed(2)}deg) scale(${s.toFixed(3)})`;
+      tm = setTimeout(step, rand(40, 120));
+    };
+    step();
+    return () => { alive = false; clearTimeout(tm); };
+  }
+
+  async function bossDeath(){
+    boss.over = true;
+    await wait(900);                               // bar finishes shrinking to nothing
+    bossHp.style.opacity = '0';
+    bossTimer.classList.remove('on');
+    await wait(500);
+    bossLives.classList.remove('on');
+    bossStopFlash();
+    bossTint.classList.remove('on');
+    await wait(1300);
+    bossClearArena();
+    settleBob();
+    bossLogo.classList.add('center');              // glides to centre screen
+    await wait(2800);
+    boss.stopChaos = startChaos();
+    bossLogo.classList.add('fade8');               // 8s fade to black while it convulses
+    await wait(8200);
+    if(boss.stopChaos){ boss.stopChaos(); boss.stopChaos = null; }
+    await wait(700);
+    bossEl.style.backgroundColor = '#dcdad3';      // the original off-white
+    await wait(2400);
+    bossW.classList.add('in');
+    if(score > best){ best = score; bestEl.textContent = best; saveBest(); }
+    await wait(2200);
+    bossHint.classList.add('in');
+    boss.canReturn = true;
+    bossEl.classList.add('can-return');
+  }
+
+  async function bossDefeat(){
+    boss.over = true;
+    await wait(1200);
+    bossTimer.classList.remove('on');
+    await wait(400);
+    bossStopFlash();
+    bossTint.classList.remove('on');
+    bossHp.style.opacity = '0';
+    bossLives.classList.remove('on');
+    await wait(1400);
+    bossClearArena();
+    settleBob();
+    bossLogo.style.transition = 'opacity 2s ease';
+    bossLogo.style.opacity = '0';
+    await wait(2200);
+    await endSoloSession();                        // end card waits underneath the black
+    bossEl.classList.remove('show');
+    await wait(1700);
+    bossReset();
+  }
+
+  async function bossReturnHome(){
+    if(!boss.canReturn) return;
+    boss.canReturn = false;
+    bossEl.classList.remove('can-return');
+    transitionOutOfPlay();
+    showCard('menu');
+    bossEl.classList.remove('show');               // off-white crossfades into the menu
+    await wait(1700);
+    bossReset();
+  }
+
+  /* ---------- entry points ---------- */
+  async function enterStage4FromStage3(){
+    if(boss.busy) return;
+    boss.busy = true;
+    soloActive = false;
+    clearTimeout(timerTimeout);
+    stopFlash();
+    // Everything still on screen dissolves before the black comes in.
+    const els = [hud, timerTrack, stageEl, wordEl, optionsEl, placementEl, bgTint];
+    const fades = els.map(el => el.animate(
+      [{ opacity:getComputedStyle(el).opacity }, { opacity:0 }],
+      { duration:1400, easing:'ease', fill:'forwards' }
+    ));
+    await wait(1500);
+    await bossFadeToBlack();
+    transitionOutOfPlay();
+    [hud, timerTrack, stageEl, wordEl, optionsEl].forEach(el => el.classList.remove('enter-top', 'enter-bottom'));
+    fades.forEach(a => a.cancel());
+    runBossIntro();
+  }
+
+  async function startBossTest(){
+    if(boss.busy) return;
+    boss.busy = true;
+    leaveLobbyState();
+    score = 0; scoreEl.textContent = 0;
+    soloCorrect = SOLO_STAGE4_AT; soloRound = 0; soloActive = false;
+    const card = cards.menu;
+    card.style.pointerEvents = 'none';
+    const fade = card.animate([{ opacity:1 }, { opacity:0 }], { duration:1100, easing:'ease', fill:'forwards' });
+    await wait(1200);                              // menu fully gone first
+    await bossFadeToBlack();
+    overlay.classList.add('hidden');
+    fade.cancel();
+    card.style.pointerEvents = '';
+    runBossIntro();
+  }
+
+  /* ================= wiring ================= */
+  $('soloBtn').addEventListener('click', () => { leaveLobbyState(); showCard('brief'); });
+  $('createBtn').addEventListener('click', () => showCard('create'));
+  $('joinBtn').addEventListener('click', () => showCard('join'));
+  $('createBack').addEventListener('click', () => showCard('menu'));
+  $('joinBack').addEventListener('click', () => showCard('menu'));
+  $('briefStart').addEventListener('click', startSoloGame);
+  $('bossTestBtn').addEventListener('click', startBossTest);
+  bossEl.addEventListener('pointerdown', () => { if(boss.canReturn) bossReturnHome(); });
+
+  $('createSubmit').addEventListener('click', async () => {
+    const name = $('createName').value.trim().slice(0,16) || 'PLAYER';
+    $('createErr').textContent = '';
+    $('createSubmit').textContent = 'CREATING…';
+    try{
+      await createLobby(name);
+      playerName = name;
+      await enterLobbyScreen();
+    }catch(e){
+      console.error('createLobby failed:', e);
+      $('createErr').textContent = (e && e.message) ? e.message : 'Could not create lobby.';
+    }
+    $('createSubmit').textContent = 'CREATE';
+  });
+
+  $('joinSubmit').addEventListener('click', async () => {
+    const code = $('joinCode').value.trim().toUpperCase();
+    const name = $('joinName').value.trim().slice(0,16) || 'PLAYER';
+    $('joinErr').textContent = '';
+    if(!code){ $('joinErr').textContent = 'Enter a code.'; return; }
+    $('joinSubmit').textContent = 'JOINING…';
+    try{
+      await joinLobbyByCode(code, name);
+      playerName = name;
+      await enterLobbyScreen();
+    }catch(e){
+      console.error('joinLobbyByCode failed:', e);
+      $('joinErr').textContent = e.message || 'Could not join.';
+    }
+    $('joinSubmit').textContent = 'JOIN';
+  });
+
+  $('targetScoreInput').addEventListener('change', async () => {
+    const v = parseInt($('targetScoreInput').value, 10);
+    await setMeta({ customTargetScore: (v && v > 0) ? v : null });
+  });
+
+  $('copyCodeBtn').addEventListener('click', async () => {
+    try{
+      await navigator.clipboard.writeText(lobbyCode || '');
+      $('copyCodeBtn').textContent = 'COPIED';
+      setTimeout(() => $('copyCodeBtn').textContent = 'COPY CODE', 1400);
+    }catch(e){}
+  });
+  $('copyLinkBtn').addEventListener('click', async () => {
+    try{
+      await navigator.clipboard.writeText($('lobbyLink').value);
+      $('copyLinkBtn').textContent = 'COPIED';
+      setTimeout(() => $('copyLinkBtn').textContent = 'COPY', 1400);
+    }catch(e){}
+  });
+
+  $('lobbyPlayBtn').addEventListener('click', () => { if(isHost) startLobbySession(); });
+  $('lobbyLeaveBtn').addEventListener('click', () => { leaveLobbyState(); transitionOutOfPlay(); showCard('menu'); });
+  $('overLeaveBtn').addEventListener('click', () => { leaveLobbyState(); transitionOutOfPlay(); showCard('menu'); });
+  $('returnBtn').addEventListener('click', () => { leaveLobbyState(); transitionOutOfPlay(); showCard('menu'); });
+  $('restartBtn').addEventListener('click', () => {
+    if(lobbyCode && isHost) restartInLobby();
+    else if(!lobbyCode) startSoloGame();
+  });
+
+  (function checkRoomParam(){
+    const room = new URLSearchParams(location.search).get('room');
+    if(room){ $('joinCode').value = room.toUpperCase(); showCard('join'); }
+  })();
+
+  loadBest();
+  renderLives();
+})();
+</script>
+</body>
+</html>
